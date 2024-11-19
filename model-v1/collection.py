@@ -61,7 +61,7 @@ async def main() -> None:
         for idx, gesture_label in enumerate(gesture_labels):
             current_gesture = idx
             
-            for repetition in range(5):  # 10 repetitions per gesture
+            for repetition in range(10):  # 10 repetitions per gesture
                 print(f"\nPerform '{CLASSES[gesture_label]}' gesture (repetition {repetition + 1}/10)")
                 
                 # Give time to prepare

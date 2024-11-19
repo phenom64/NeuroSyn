@@ -38,6 +38,6 @@ class Classifier:
         prediction = self.model.predict(emg_features_reshaped)
         predicted_class = np.argmax(prediction)
         
-        print(f"Predicted probabilities: {prediction}")
+        print(f"Probabilities: {prediction}")
         
         return CLASSES[predicted_class]
