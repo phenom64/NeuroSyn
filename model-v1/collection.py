@@ -3,7 +3,7 @@ import csv
 import os
 from bleak import BleakScanner
 from pymyo import Myo
-from pymyo.types import EmgMode, EmgValue, UnsupportedFeatureError
+from pymyo.types import EmgMode, EmgValue, UnsupportedFeatureError, SleepMode
 from constants import (
     CLASSES,
     MYO_ADDRESS
@@ -49,36 +49,49 @@ async def main() -> None:
         # Set EMG mode
         await asyncio.sleep(1)
         await myo.set_mode(emg_mode=EmgMode.EMG)
+        await asyncio.sleep(0.5)
+        await myo.set_sleep_mode(SleepMode.NEVER_SLEEP)
+        await asyncio.sleep(0.25)
         
         print("Collecting EMG data. Please perform the gestures when prompted.")
+        
+        all_data = []
         
         # Collect data for each gesture
         for idx, gesture_label in enumerate(gesture_labels):
             current_gesture = idx
             
-            for repetition in range(2):  # 10 repetitions per gesture
+            for repetition in range(5):  # 10 repetitions per gesture
                 print(f"\nPerform '{CLASSES[gesture_label]}' gesture (repetition {repetition + 1}/10)")
                 
                 # Give time to prepare
                 print("Preparing...")
                 await asyncio.sleep(3)  # 3 seconds to react
                 
+                #
                 print("Recording...")
                 await asyncio.sleep(collection_time)
-                await asyncio.sleep(1)  # Brief pause between repetitions
+                #
+                
+                for data in data_collection:
+                    all_data.append(data)
+                
+                print(f"Collected {len(data_collection)} data points")
+                data_collection = []
+                
+                await myo.vibrate2((100, 200), (50, 255))
+                await asyncio.sleep(0.5)
         
         print("\nFinished collecting data.")
         
-        print(data_collection)
-        
-         # Save to CSV
+        # Save to CSV
         filename = f"data/{gesture_label}_{repetition}.csv"
         with open(filename, "w", newline="") as csvfile:
             writer = csv.writer(csvfile)
             writer.writerow(columns)
             
-            for row in data_collection:
-                writer.writerow([*row])
+            for row in all_data:
+                writer.writerow(row)
         
         print(f"Data saved to {filename}")
 
