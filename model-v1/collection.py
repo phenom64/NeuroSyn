@@ -1,7 +1,9 @@
 import asyncio
 import csv
 import os
+import uuid
 from bleak import BleakScanner
+from pathlib import Path
 from pymyo import Myo
 from pymyo.types import EmgMode, EmgValue, UnsupportedFeatureError, SleepMode
 from constants import (
@@ -85,7 +87,10 @@ async def main() -> None:
         print("\nFinished collecting data.")
         
         # Save to CSV
-        filename = f"data/{gesture_label}_{repetition}.csv"
+        filename = Path(f"data/{gesture_label}_{repetition}_will.csv")
+        while os.path.exists(str(filename)):
+            filename = filename.stem + uuid.uuid4().hex[:4] + filename.suffix
+        
         with open(filename, "w", newline="") as csvfile:
             writer = csv.writer(csvfile)
             writer.writerow(columns)
