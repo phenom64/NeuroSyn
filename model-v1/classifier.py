@@ -5,7 +5,18 @@ import pickle
 from pymyo.types import EmgValue
 from tensorflow.keras.models import load_model
 
-from constants import CLASSES
+# from constants import CLASSES
+
+CLASSES = {
+    0: "rest", #saftey
+    1: "closed_fist", #go up
+    2: "open_palm", #go down
+    3: "ok", #go forwards
+    4: "pointer_finger", #go backwards
+    5: "peace", #roatate left
+    6: "shaaa", #rotate right
+    7: "peace_among_worlds", #do a flip
+}
 
 
 class Classifier:
@@ -26,5 +37,7 @@ class Classifier:
 
         prediction = self.model.predict(emg_features_reshaped)
         predicted_class = np.argmax(prediction)
+        
+        print(f"Probabilities: {prediction}")
         
         return CLASSES[predicted_class]

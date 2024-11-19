@@ -3,7 +3,7 @@ from collections import deque
 from typing import Deque, Tuple
 from bleak import BleakScanner
 from pymyo import Myo
-from pymyo.types import EmgMode, EmgValue
+from pymyo.types import EmgMode, EmgValue, SleepMode
 
 from classifier import Classifier
 from constants import (
@@ -23,7 +23,7 @@ class EMGProcessor:
         self.window_size = window_size
         self.emg_buffer: Deque[Tuple[EmgValue, EmgValue]] = deque(maxlen=window_size)
         self.last_prediction_time = 0
-        self.prediction_interval = 0.1  # seconds
+        self.prediction_interval = 0.5  # seconds
 
     def add_sample(self, emg_data: Tuple[EmgValue, EmgValue]) -> None:
         """Add a new EMG sample to the buffer"""
@@ -74,6 +74,7 @@ async def main() -> None:
 
         await asyncio.sleep(1)
         await myo.set_mode(emg_mode=EmgMode.EMG)
+        await myo.set_sleep_mode(SleepMode.NEVER_SLEEP)
 
         print("\nCollecting data in millivolts... Press Ctrl+C to stop")
         
