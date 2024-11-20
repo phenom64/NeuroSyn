@@ -87,7 +87,7 @@ async def main() -> None:
         print("\nFinished collecting data.")
         
         # Save to CSV
-        filename = Path(f"data/{gesture_label}_{repetition}_will.csv")
+        filename = Path(f"data/{gesture_label}_{repetition}_{first_name}.csv")
         while os.path.exists(str(filename)):
             filename = filename.stem + uuid.uuid4().hex[:4] + filename.suffix
         
@@ -101,4 +101,5 @@ async def main() -> None:
         print(f"Data saved to {filename}")
 
 if __name__ == "__main__":
+    first_name = input("Enter your first name in all lowercase, no spaces or special characters: ")
     asyncio.run(main())
