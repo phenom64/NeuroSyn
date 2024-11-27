@@ -65,7 +65,7 @@ async def main() -> None:
             
             for repetition in range(10):  # 10 repetitions per gesture
                 print(f"\nPerform '{CLASSES[gesture_label]}' gesture (repetition {repetition + 1}/10)")
-                
+        
                 # Give time to prepare
                 print("Preparing...")
                 await asyncio.sleep(3)  # 3 seconds to react

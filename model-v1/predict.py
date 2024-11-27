@@ -5,15 +5,18 @@ from bleak import BleakScanner
 from pymyo import Myo
 from pymyo.types import EmgMode, EmgValue, SleepMode
 
+import numpy as np
+
 from classifier import Classifier
 from constants import (
     MYO_ADDRESS,
     MODEL_PATH,
-    METADATA_PATH
+    METADATA_PATH,
+    CLASSES,
 )
 
 class EMGProcessor:
-    def __init__(self, classifier: Classifier, window_size: int = 20):
+    def __init__(self, classifier: Classifier, window_size: int = 60):
         """
         Initialize EMG processor with a classifier and window size.
         window_size: Number of samples to keep in buffer (assuming 200Hz sampling rate,
@@ -23,7 +26,7 @@ class EMGProcessor:
         self.window_size = window_size
         self.emg_buffer: Deque[Tuple[EmgValue, EmgValue]] = deque(maxlen=window_size)
         self.last_prediction_time = 0
-        self.prediction_interval = 0.5  # seconds
+        self.prediction_interval = 0.2  # seconds
 
     def add_sample(self, emg_data: Tuple[EmgValue, EmgValue]) -> None:
         """Add a new EMG sample to the buffer"""
@@ -39,7 +42,11 @@ class EMGProcessor:
             return "Insufficient data"
 
         # Use the most recent sample for prediction
-        latest_data = self.emg_buffer[-1]
+        latest_data = self.emg_buffer
+        latest_data = np.sqrt(np.mean(np.square(latest_data), axis=0))
+            
+        #print(latest_data.shape)
+
         predicted_class = self.classifier.classify(latest_data)
         
         # Print the EMG data and prediction
