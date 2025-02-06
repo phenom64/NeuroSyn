@@ -60,8 +60,8 @@ async def main():
         # Collect data for each gesture
         for gesture_id, gesture_name in CLASSES.items():
 
-            for repetition in range(10):
-                print(f"\nPerform '{gesture_name}' gesture, (repetition {repetition + 1}/10)")
+            for repetition in range(5):
+                print(f"\nPerform '{gesture_name}' gesture, (repetition {repetition + 1}/5)")
 
                 try:
                     # Ensure EMG mode is reset before collecting new gesture

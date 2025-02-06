@@ -5,7 +5,7 @@ DATA_INPUT_PATH = "data"
 MODEL_PATH = "model.h5"
 METADATA_PATH = "metadata.pkl"
 
-COLLECTION_TIME = 5  # seconds
+COLLECTION_TIME = 10  # seconds
 
 CLASSES = {
     0: "resting",

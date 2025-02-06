@@ -1,4 +1,6 @@
 import time
+import keyboard
+from pyparrot.Bebop import Bebop
 import asyncio
 import numpy as np
 import pandas as pd
@@ -11,8 +13,13 @@ from pymyo.types import EmgMode, SleepMode
 
 from constants import MYO_ADDRESS, CLASSES, MODEL_PATH, METADATA_PATH
 
+# Global
+window_size = 10
+prediction_interval = 1
+movement_time = 0.1
+
 class GesturePredictor:
-    def __init__(self, window_size=10, prediction_interval=1.0):
+    def __init__(self):
         self.window_size = window_size
         self.data_buffer = deque(maxlen=window_size)
         self.prediction_interval = prediction_interval
@@ -62,15 +69,28 @@ class GesturePredictor:
             return self.process_window()
         return None
 
+def gesture_to_drone_command(class_id):
+    """Convert gesture to drone command parameters."""
+    commands = {
+        '0': {'pitch': 0, 'roll': 0, 'yaw': 0, 'vertical_movement': 0}, # resting
+        '1': {'pitch': 0, 'roll': 0, 'yaw': 0, 'vertical_movement': 50}, # open palm, go up
+        '2': {'pitch': 0, 'roll': 0, 'yaw': 0, 'vertical_movement': -50}, # closed fist, go down
+        '3': {'pitch': 50, 'roll': 0, 'yaw': 0, 'vertical_movement': 0}, # ok, go forward
+        '4': {'pitch': -50, 'roll': 0, 'yaw': 0, 'vertical_movement': 0}, # pointer finger, go back
+        '5': {'pitch': 0, 'roll': 0, 'yaw': -50, 'vertical_movement': 0}, # peace, rotate left
+        '6': {'pitch': 0, 'roll': 0, 'yaw': 50, 'vertical_movement': -50}, # sha, rotate right
+    }
+    return commands.get(class_id, commands['0'])
 
 async def main():    
+
     # Find and connect to Myo device
     myo_device = await BleakScanner.find_device_by_address(MYO_ADDRESS)
     if not myo_device:
         raise RuntimeError(f"Could not find Myo device with address {MYO_ADDRESS}")
     
-    print("Starting gesture prediction session...")
-    print("Make gestures to see predictions (updating every second)...")
+    print("Starting gesture control session...")
+    print(f"Make gestures to control drone (updating every {prediction_interval})...")
     
     async with Myo(myo_device) as myo:
         await asyncio.sleep(0.5)
@@ -84,11 +104,33 @@ async def main():
             
             if prediction:
                 class_id, gesture_name = prediction
-                print(f"\rPredicted gesture: {gesture_name} (class {class_id})")
-    
+                
+
+                if class_id == 7:
+                    bebop.flip("back")
+                else:    
+                    command = gesture_to_drone_command(class_id)
+
+                    bebop.fly_direct(
+                        roll=command['roll'],
+                        pitch=command['pitch'],
+                        yaw=command['yaw'],
+                        vertical_movement=command['vertical_movement'],
+                        duration=0.05
+                        )
+                    
+                    print(f"\rPredicted gesture: {gesture_name} (class {class_id})")
+
+        # Press L for emergency land
+        keyboard.block_key('l')
+        if keyboard.is_pressed('l'):
+            bebop.safe_land(10)
+            return
+
         # Set EMG mode and collect data
         await myo.set_mode(emg_mode=EmgMode.SMOOTH)
-        
+        print("Myo band activated succesfully, taking off in 5 seconds")
+
         try:
             while True:
                 await asyncio.sleep(0.01)
@@ -96,7 +138,28 @@ async def main():
             print("\nStopping gesture prediction...")
             await myo.set_mode(emg_mode=None)
 
-
 if __name__ == "__main__":
-    predictor = GesturePredictor(prediction_interval=1.0)
-    asyncio.run(main())
+    predictor = GesturePredictor()
+
+    bebop = Bebop()
+
+    # Press L for emergency land
+    keyboard.block_key('l')
+    if keyboard.is_pressed('l'):
+        bebop.safe_land(10)
+        exit()
+
+    # Initialize drone    
+    print('Connecting to drone...')
+    success = bebop.connect(10)  # Store the connection result
+
+    if not success:
+        print("Failed to connect to Bebop")
+
+    # Drone activation 
+    bebop.smart_sleep(5)
+    bebop.ask_for_state_update()
+    bebop.safe_takeoff(10)
+    bebop.set_max_altitude(1)
+
+    asyncio.run(main()) 

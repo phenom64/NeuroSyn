@@ -148,7 +148,7 @@ async def main():
 
         # determine average EMG value for each sensor
         sensor_values = list(zip(*collector))
-        emg_profile = [sum(sensor) / len(sensor) for sensbor in sensor_values]
+        emg_profile = [sum(sensor) / len(sensor) for sensor in sensor_values]
 
         # Save the profile
         profile_manager.save_profile(profile_name, emg_profile)
@@ -162,8 +162,7 @@ async def main():
         print(f'\nYou will be required to complete {len(CLASSES)} gestures, {rpt} times')
 
         await asyncio.sleep(3)
-        await gesture_data_collection()
-        
+                
         all_data = data_collector.data_collection
         filename = f"{profile_name}_gestures.csv"
         data_collector.save_data(filename, columns, all_data)
