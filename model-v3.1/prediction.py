@@ -63,38 +63,43 @@ class GesturePredictor:
         return None
 
 
-async def main():    
-    # Find and connect to Myo device
-    myo_device = await BleakScanner.find_device_by_address(MYO_ADDRESS)
-    if not myo_device:
-        raise RuntimeError(f"Could not find Myo device with address {MYO_ADDRESS}")
-    
-    print("Starting gesture prediction session...")
-    print("Make gestures to see predictions (updating every second)...")
-    
-    async with Myo(myo_device) as myo:
-        await asyncio.sleep(0.5)
-        await myo.set_sleep_mode(SleepMode.NEVER_SLEEP)
-        await asyncio.sleep(0.25)
+async def main():
+    try: 
+        # Find and connect to Myo device
+        myo_device = await BleakScanner.find_device_by_address(MYO_ADDRESS)
+        if not myo_device:
+            raise RuntimeError(f"Could not find Myo device with address {MYO_ADDRESS}")
         
-        @myo.on_emg_smooth
-        def on_emg_smooth(emg_data):
-            # Process the EMG data
-            prediction = predictor.add_data(emg_data)
+        print("Starting gesture prediction session...")
+        print("Make gestures to see predictions (updating every second)...")
+        
+        async with Myo(myo_device) as myo:
+            await asyncio.sleep(0.5)
+            await myo.set_sleep_mode(SleepMode.NEVER_SLEEP)
+            await asyncio.sleep(0.25)
             
-            if prediction:
-                class_id, gesture_name = prediction
-                print(f"\rPredicted gesture: {gesture_name} (class {class_id})")
-    
-        # Set EMG mode and collect data
-        await myo.set_mode(emg_mode=EmgMode.SMOOTH)
+            @myo.on_emg_smooth
+            def on_emg_smooth(emg_data):
+                # Process the EMG data
+                prediction = predictor.add_data(emg_data)
+                
+                if prediction:
+                    class_id, gesture_name = prediction
+                    print(f"\rPredicted gesture: {gesture_name} (class {class_id})")
         
-        try:
-            while True:
-                await asyncio.sleep(0.01)
-        except KeyboardInterrupt:
-            print("\nStopping gesture prediction...")
-            await myo.set_mode(emg_mode=None)
+            # Set EMG mode and collect data
+            await myo.set_mode(emg_mode=EmgMode.SMOOTH)
+            
+            try:
+                while True:
+                    await asyncio.sleep(0.01)
+            except KeyboardInterrupt:
+                print("\nStopping gesture prediction...")
+                await myo.set_mode(emg_mode=None)
+    
+    except:
+        print('no work')
+        exit()
 
 
 if __name__ == "__main__":

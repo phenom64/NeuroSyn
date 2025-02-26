@@ -99,7 +99,7 @@ class DroneController:
         print("Drone connected successfully")
         
         # Initialize drone
-        self.bebop.smart_sleep(2)
+        #self.bebop.smart_sleep(2)
         self.bebop.ask_for_state_update()
         self.bebop.set_max_altitude(MAX_ALTITUDE)
         
@@ -122,10 +122,14 @@ class DroneController:
             
     def disconnect(self):
         """Disconnect from the drone."""
-        if self.is_connected:
+        if self.is_connected and not self.is_flying:
             self.bebop.disconnect()
             self.is_connected = False
-            
+        elif self.is_flying:
+            print('Cannot disconect while drone is in flight')
+        else:
+            print('Could not discoect')    
+
     async def execute_command(self, command):
         """Execute a drone movement command."""
         if not self.is_flying:
@@ -163,6 +167,8 @@ def get_drone_command(class_id):
         '4': {'pitch': -50, 'roll': 0, 'yaw': 0, 'vertical_movement': 0},  # pointer finger, go back
         '5': {'pitch': 0, 'roll': 0, 'yaw': -50, 'vertical_movement': 0},  # peace, rotate left
         '6': {'pitch': 0, 'roll': 0, 'yaw': 50, 'vertical_movement': 0},   # sha, rotate right
+        '8' : {'pitch': 0, 'roll': -50, 'yaw': 0, 'vertical_movement': 0},  # currently for the keyboard to move left
+        '8' : {'pitch': 0, 'roll': 50, 'yaw': 0, 'vertical_movement': 0}, # currently for the keyboard to move right
     }
     return commands.get(str(class_id), commands['0'])
 
@@ -172,7 +178,9 @@ KEYBOARD_COMMANDS = {
     'w': 3,      # forward
     's': 4,      # back
     'e': 5,      # rotate left
-    'q': 6       # rotate right
+    'q': 6,      # rotate right
+    'a' : 8,     # move left 
+    'd' : 9,     # move right
 }
 
 class ControlSystem:
