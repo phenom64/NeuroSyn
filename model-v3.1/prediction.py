@@ -19,8 +19,8 @@ class GesturePredictor:
         self.last_prediction_time = 0
         
         # Load the model and metadata
-        self.model = tf.keras.models.load_model(f"model/{MODEL_PATH}")
-        with open(f"model/{METADATA_PATH}", 'rb') as f:
+        self.model = tf.keras.models.load_model(f"{'/Users/phenom/artemis/Artemis-Public/model-v3.1/model/model.h5'}")
+        with open(f"{'/Users/phenom/artemis/Artemis-Public/model-v3.1/model/metadata.pkl'}", 'rb') as f:
             self.scaler, self.columns = pickle.load(f)
             
     def process_window(self):
@@ -97,8 +97,11 @@ async def main():
                 print("\nStopping gesture prediction...")
                 await myo.set_mode(emg_mode=None)
     
-    except:
-        print('no work')
+    except RuntimeError as e:
+        print(f"Runtime error: {e}")
+        exit()
+    except Exception as e:
+        print(f"An unexpected error occurred: {e}")
         exit()
 
 
