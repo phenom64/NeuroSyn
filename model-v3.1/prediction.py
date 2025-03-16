@@ -1,3 +1,4 @@
+import os
 import time
 import asyncio
 import numpy as np
@@ -9,7 +10,13 @@ from bleak import BleakScanner
 from pymyo import Myo
 from pymyo.types import EmgMode, SleepMode
 
-from constants import MYO_ADDRESS, CLASSES, MODEL_PATH, METADATA_PATH
+from constants import MYO_ADDRESS, CLASSES  # MODEL_PATH and METADATA_PATH are now handled here
+
+# Determine the base directory (directory where this script is located)
+BASE_PATH = os.path.dirname(os.path.abspath(__file__))
+MODEL_DIR = os.path.join(BASE_PATH, "model")
+MODEL_FILE = os.path.join(MODEL_DIR, "model.h5")
+METADATA_FILE = os.path.join(MODEL_DIR, "metadata.pkl")
 
 class GesturePredictor:
     def __init__(self, window_size=10, prediction_interval=1.0):
@@ -17,11 +24,10 @@ class GesturePredictor:
         self.data_buffer = deque(maxlen=window_size)
         self.prediction_interval = prediction_interval
         self.last_prediction_time = 0
-        self.threshold = threshold
         
-        # Load the model and metadata
-        self.model = tf.keras.models.load_model("C:/Users/simpl/Desktop/coding/Artemis-Public/model-v3.1/model/model.h5")
-        with open("C:/Users/simpl/Desktop/coding/Artemis-Public/model-v3.1/model/metadata.pkl", 'rb') as f:
+        # Load the model and metadata using relative paths
+        self.model = tf.keras.models.load_model(MODEL_FILE)
+        with open(METADATA_FILE, 'rb') as f:
             self.scaler, self.columns = pickle.load(f)
             
     def process_window(self):
@@ -44,10 +50,6 @@ class GesturePredictor:
         # Make prediction
         prediction = self.model.predict(features_scaled, verbose=0)
         predicted_class = np.argmax(prediction[0])
-        confidence = prediction[0][predicted_class]
-        
-        if predicted_class != 0 and confidence < threshold:
-            return 0, CLASSES[0]
         
         return predicted_class, CLASSES[predicted_class]
     
@@ -90,7 +92,7 @@ async def main():
                 
                 if prediction:
                     class_id, gesture_name = prediction
-                    print(f"\rPredicted gesture: {gesture_name} (class {class_id})")
+                    print(f"\rPredicted gesture: {gesture_name} (class {class_id})", end="")
         
             # Set EMG mode and collect data
             await myo.set_mode(emg_mode=EmgMode.SMOOTH)
@@ -109,8 +111,7 @@ async def main():
         print(f"An unexpected error occurred: {e}")
         exit()
 
-if __name__ == "__main__":
-    threshold = 0.7 
-    predictor = GesturePredictor(prediction_interval=1.0)
 
+if __name__ == "__main__":
+    predictor = GesturePredictor(prediction_interval=1.0)
     asyncio.run(main())

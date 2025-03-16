@@ -5,9 +5,10 @@ Created by Syndromatic Inc. / Kavish Krishnakumar (2025)
 ---------------------------------------------------------------------------
 1) Welcome window (scaled icon, title, instructions)
 2) Animated "Connecting" screen with a computer icon on the left, Myo icon on the right,
-   and three orbs that fade/move from left to right in sequence.
+   and three orbs (orb.png) that fade/move from left to right in sequence.
 3) Main window for controlling and monitoring Myo EMG data with a progress bar, logs, etc.
 4) SynOS/Mac-style About menu item (cross-platform fallback if not on SynOS or Mac OS X).
+5) The log area now uses Dot Matrix font and a CRT scanline background.
 
 Prerequisites:
   - PyQt6
@@ -19,6 +20,7 @@ Prerequisites:
 
 import os
 import sys
+import time
 import asyncio
 import math
 import platform
@@ -38,7 +40,7 @@ BASE_PATH = os.path.dirname(os.path.abspath(__file__))
 MEDIA_PATH = os.path.join(BASE_PATH, "NSEmedia")
 
 # Your custom modules
-from prediction import GesturePredictor
+from UnifiedController import main_unified, GesturePredictor
 from constants import MYO_ADDRESS
 
 from pymyo import Myo
@@ -47,8 +49,9 @@ from bleak import BleakScanner
 
 # Global variables to store font family names once loaded
 GARAMOND_LIGHT_FAMILY = None            # Loaded from ITCGaramondStd-LtCond.ttf
-GARAMOND_LIGHT_ITALIC_FAMILY = None       # Loaded from ITCGaramondStd-LtCondIta.ttf
-GARAMOND_BOOK_FAMILY = None               # Loaded from ITCGaramondStd-BkCond.ttf
+GARAMOND_LIGHT_ITALIC_FAMILY = None     # Loaded from ITCGaramondStd-LtCondIta.ttf
+GARAMOND_BOOK_FAMILY = None             # Loaded from ITCGaramondStd-BkCond.ttf
+DOTMATRIX_FAMILY = None                 # Loaded from DOTMATRI.ttf
 
 ###############################################################################
 # Worker for handling Myo data & predictions
@@ -251,15 +254,15 @@ class EMGControllerMainWindow(QMainWindow):
         self.setCentralWidget(central_widget)
         layout = QVBoxLayout(central_widget)
         
-        # Use ITC Garamond Light Condensed for general text where needed
+        # Prediction label uses ITC Garamond Light
         self.prediction_label = QLabel("No prediction yet.")
         self.prediction_label.setFont(QFont(GARAMOND_LIGHT_FAMILY, 18))
         layout.addWidget(self.prediction_label)
         
         progress_layout = QHBoxLayout()
-        # Set "Signal Strength:" label to ITC Garamond Light Condensed Italic
+        # "Signal Strength:" uses ITC Garamond Light Italic
         progress_label = QLabel("Signal Strength:")
-        progress_label.setFont(QFont(GARAMOND_LIGHT_ITALIC_FAMILY, 16, QFont.Weight.Normal, True))
+        progress_label.setFont(QFont(GARAMOND_LIGHT_ITALIC_FAMILY, 14, QFont.Weight.Normal, True))
         progress_layout.addWidget(progress_label)
         
         self.progress_bar = QProgressBar()
@@ -272,7 +275,6 @@ class EMGControllerMainWindow(QMainWindow):
         layout.addLayout(progress_layout)
         
         self.start_button = QPushButton("Start Prediction")
-        # Restore native button look
         self.start_button.setFont(QApplication.font("QPushButton"))
         self.start_button.clicked.connect(self.start_prediction)
         layout.addWidget(self.start_button)
@@ -285,20 +287,28 @@ class EMGControllerMainWindow(QMainWindow):
         
         self.log_area = QTextEdit()
         self.log_area.setReadOnly(True)
-        # Use OffBit Trial for log area
-        offbit_id = QFontDatabase.addApplicationFont(os.path.join(MEDIA_PATH, "OffBitTrial-Dot.ttf"))
-        if offbit_id != -1:
-            offbit_family = QFontDatabase.applicationFontFamilies(offbit_id)[0]
+        
+        # Load Dot Matrix font for the log area
+        dotmatrix_id = QFontDatabase.addApplicationFont(os.path.join(MEDIA_PATH, "DOTMATRI.ttf"))
+        if dotmatrix_id != -1:
+            dotmatrix_family = QFontDatabase.applicationFontFamilies(dotmatrix_id)[0]
         else:
-            offbit_family = "OffBitTrial-Dot"
-        self.log_area.setFont(QFont(offbit_family, 14))
-        self.log_area.setStyleSheet("""
-            QTextEdit {
-                background-color: #1e1e1e;
-                color: #ffff00;
-                border: none;
-            }
+            dotmatrix_family = "DotMatrix"
+
+        self.log_area.setFont(QFont(dotmatrix_family, 14))
+        # Add a CRT-like background with scanlines
+        self.log_area.setStyleSheet(f"""
+            QTextEdit {{
+            background-color: #1e1e1e;
+            background-image: url("file://{os.path.join(MEDIA_PATH, "scanlines.png")}");
+            background-repeat: repeat;
+            color: #ffff00;
+            border: none;
+            }}
         """)
+
+        
+        # Keep the drop shadow effect
         shadow = QGraphicsDropShadowEffect()
         shadow.setBlurRadius(10)
         shadow.setColor(QColor("#ffff00"))
@@ -366,7 +376,10 @@ class EMGControllerMainWindow(QMainWindow):
             self.connect_window = None
 
     def update_prediction(self, text):
+        # Update the prediction label and append the prediction with a timestamp to the log.
         self.prediction_label.setText(text)
+        timestamp = time.strftime("%H:%M:%S")
+        self.log_area.append(f"{timestamp} - {text}")
         if self.connect_window:
             self.connect_window.close()
             self.connect_window = None
@@ -444,9 +457,9 @@ def main():
     app.setOrganizationName("Syndromatic Inc.")
     app.setApplicationName("EMGController")
     
-    # Load ITC Garamond fonts from the NSEmedia folder
-    global GARAMOND_LIGHT_FAMILY, GARAMOND_LIGHT_ITALIC_FAMILY, GARAMOND_BOOK_FAMILY
+    global GARAMOND_LIGHT_FAMILY, GARAMOND_LIGHT_ITALIC_FAMILY, GARAMOND_BOOK_FAMILY, DOTMATRIX_FAMILY
     
+    # Load ITC Garamond fonts
     light_id = QFontDatabase.addApplicationFont(os.path.join(MEDIA_PATH, "ITCGaramondStd-LtCond.ttf"))
     if light_id != -1:
         GARAMOND_LIGHT_FAMILY = QFontDatabase.applicationFontFamilies(light_id)[0]
@@ -465,12 +478,19 @@ def main():
     else:
         GARAMOND_BOOK_FAMILY = "ITCGaramondStd Book Condensed"
     
+    # Load Dot Matrix font as well
+    dotmatrix_id = QFontDatabase.addApplicationFont(os.path.join(MEDIA_PATH, "DOTMATRI.ttf"))
+    if dotmatrix_id != -1:
+        DOTMATRIX_FAMILY = QFontDatabase.applicationFontFamilies(dotmatrix_id)[0]
+    else:
+        DOTMATRIX_FAMILY = "DotMatrix"
+    
     print("Loaded ITC Garamond Light:", GARAMOND_LIGHT_FAMILY)
     print("Loaded ITC Garamond Light Italic:", GARAMOND_LIGHT_ITALIC_FAMILY)
     print("Loaded ITC Garamond Book:", GARAMOND_BOOK_FAMILY)
+    print("Loaded Dot Matrix:", DOTMATRIX_FAMILY)
     
     # Do not set a global font here so buttons remain native.
-    # Set the application icon using a relative path.
     app.setWindowIcon(QIcon(os.path.join(MEDIA_PATH, "myo_icon.png")))
     
     welcome = WelcomeWindow()
