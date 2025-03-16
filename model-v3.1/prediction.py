@@ -17,10 +17,11 @@ class GesturePredictor:
         self.data_buffer = deque(maxlen=window_size)
         self.prediction_interval = prediction_interval
         self.last_prediction_time = 0
+        self.threshold = threshold
         
         # Load the model and metadata
-        self.model = tf.keras.models.load_model(f"model/{MODEL_PATH}")
-        with open(f"model/{METADATA_PATH}", 'rb') as f:
+        self.model = tf.keras.models.load_model("C:/Users/simpl/Desktop/coding/Artemis-Public/model-v3.1/model/model.h5")
+        with open("C:/Users/simpl/Desktop/coding/Artemis-Public/model-v3.1/model/metadata.pkl", 'rb') as f:
             self.scaler, self.columns = pickle.load(f)
             
     def process_window(self):
@@ -43,6 +44,10 @@ class GesturePredictor:
         # Make prediction
         prediction = self.model.predict(features_scaled, verbose=0)
         predicted_class = np.argmax(prediction[0])
+        confidence = prediction[0][predicted_class]
+        
+        if predicted_class != 0 and confidence < threshold:
+            return 0, CLASSES[0]
         
         return predicted_class, CLASSES[predicted_class]
     
@@ -97,11 +102,15 @@ async def main():
                 print("\nStopping gesture prediction...")
                 await myo.set_mode(emg_mode=None)
     
-    except:
-        print('no work')
+    except RuntimeError as e:
+        print(f"Runtime error: {e}")
+        exit()
+    except Exception as e:
+        print(f"An unexpected error occurred: {e}")
         exit()
 
-
 if __name__ == "__main__":
+    threshold = 0.7 
     predictor = GesturePredictor(prediction_interval=1.0)
+
     asyncio.run(main())
