@@ -167,16 +167,26 @@ class CalibrationDialog(QMainWindow):
 
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Calibration")
+        self.setWindowTitle("Calibration Assistant")
         self.resize(520, 340)
 
         central = QWidget(self)
         self.setCentralWidget(central)
         vbox = QVBoxLayout(central)
         vbox.setAlignment(Qt.AlignmentFlag.AlignCenter)
+       # ─── Add the SetupAssistant logo above the title ────────────
+        self.logo = QLabel()
+        logo_pix = QPixmap(os.path.join(MEDIA_PATH, "SetupAssistant.png"))
+        self.logo.setPixmap(
+            logo_pix.scaled(100, 100,
+                            Qt.AspectRatioMode.KeepAspectRatio,
+                            Qt.TransformationMode.SmoothTransformation)
+        )
+        self.logo.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        vbox.addWidget(self.logo)
 
         # headline
-        self.head = QLabel("Calibration")
+        self.head = QLabel("Calibration Assistant")
         self.head.setFont(QFont(GARAMOND_BOOK_FAMILY, 30, QFont.Weight.Bold))
         self.head.setAlignment(Qt.AlignmentFlag.AlignCenter)
         vbox.addWidget(self.head)
@@ -218,6 +228,7 @@ class CalibrationDialog(QMainWindow):
 
     # called for every cue
     def show_gesture(self, title: str, seconds: int, icon_file: str):
+        self.logo.hide()
         self.head.setText(title)
         self.body.setText(f"Hold for {seconds} s …")
         pix = QPixmap(os.path.join(MEDIA_PATH, "gestures", icon_file))
@@ -548,12 +559,14 @@ class EMGControllerMainWindow(QMainWindow):
             #    self.worker.start_calibration,
             #    Qt.ConnectionType.QueuedConnection
             #)
+            self.cal_dlg.logo.show()
             self.cal_dlg.proceed_clicked.connect(self._relay_start_cal)
             self.cal_dlg.show()
             return
 
         # 2) per-gesture cue  (format:  CUE|<cid>|<name>|<seconds>)
         if text.startswith("CUE|"):
+            self.cal_dlg.logo.hide()
             _, cid, gname, secs = text.split("|")
             icon_file = ICON_PATHS[int(cid)]
             self.cal_dlg.show_gesture(
@@ -565,6 +578,11 @@ class EMGControllerMainWindow(QMainWindow):
 
         # 3) calibration finished
         if text == "CAL_DONE":
+            # hide the per‐gesture icon and countdown
+            self.cal_dlg.icon.hide()
+            self.cal_dlg.timer_lbl.hide()
+            # show the SetupAssistant logo again
+            self.cal_dlg.logo.show()
             self.cal_dlg.head.setText("Calibration complete!")
             self.cal_dlg.body.setText("You’re ready to go.")
             self.cal_dlg.ok_btn.hide()
