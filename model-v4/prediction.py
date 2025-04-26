@@ -101,13 +101,14 @@ class GesturePredictor:
             return self.process_window()
         return None
 
-async def calibrate_gestures(myo, predictor):
+async def calibrate_gestures(myo, predictor, cue=print, log=print):
     """Run the calibration process for all gestures with controlled data collection."""
     print("Starting calibration process...")
     print(f"Please perform each gesture {predictor.num_repetitions} times for {COLLECTION_TIME} seconds each.")
     
     for class_id, gesture_name in CLASSES.items():
         for rep in range(predictor.num_repetitions):
+            cue(f"CUE|{class_id}|{gesture_name}|{COLLECTION_TIME}")
             print(f"\nCalibration for '{gesture_name}' (class {class_id}), repetition {rep + 1}/{predictor.num_repetitions}")
             print(f"Get ready... (2 seconds)")
             await asyncio.sleep(2)
@@ -124,6 +125,7 @@ async def calibrate_gestures(myo, predictor):
 
     # Finalize calibration after collecting all data
     predictor.finalize_calibration()
+    cue("CAL_DONE")
 
 async def main():
     try:

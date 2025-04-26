@@ -31,7 +31,7 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtGui import QPixmap, QAction, QIcon, QFont, QFontDatabase, QColor
 from PyQt6.QtCore import (
-    QThread, pyqtSignal, QObject, Qt, QTimer, QEasingCurve, QPropertyAnimation,
+    QThread, pyqtSignal, pyqtSlot, QObject, Qt, QTimer, QEasingCurve, QPropertyAnimation,
     QSequentialAnimationGroup, QParallelAnimationGroup, QPauseAnimation, QRect
 )
 
@@ -40,12 +40,29 @@ BASE_PATH = os.path.dirname(os.path.abspath(__file__))
 MEDIA_PATH = os.path.join(BASE_PATH, "NSEmedia")
 
 # Your custom modules
-from prediction import GesturePredictor
-from constants import MYO_ADDRESS
+from prediction import GesturePredictor, calibrate_gestures
+from constants import MYO_ADDRESS, ICON_PATHS
 
 from pymyo import Myo
 from pymyo.types import EmgMode, SleepMode
 from bleak import BleakScanner
+
+# ─── Patch pymyo’s buggy classifier handler ────────────────────────────────────
+import types, struct
+from pymyo import Myo          # already imported above
+
+def _safe_on_classifier(self, sender, value):
+    # Ignore short packets that crash the stock handler
+    if len(value) < 3:
+        return
+    try:
+        event_type, event_data = struct.unpack("<B2s", value)
+    except struct.error:
+        return  # just skip malformed packets
+
+# Replace the method on the Myo class (runs once at import time)
+Myo._on_classifier = types.MethodType(_safe_on_classifier, Myo)
+# ───────────────────────────────────────────────────────────────────────────────
 
 # Global variables to store font family names once loaded
 GARAMOND_LIGHT_FAMILY = None            # Loaded from ITCGaramondStd-LtCond.ttf
@@ -60,47 +77,167 @@ class PredictionWorker(QObject):
     prediction_signal = pyqtSignal(str)
     progress_signal = pyqtSignal(int)
     error_signal = pyqtSignal(str)
+    status_signal       = pyqtSignal(str)
     
     def __init__(self, predictor: GesturePredictor):
         super().__init__()
         self.predictor = predictor
         self._is_running = True
+        self._cal_start = asyncio.Event()   # waits until user clicks OK
 
     async def run_async(self):
+        self._cal_start.clear()      # reset before we wait again
         try:
+        # 1 Find the armband
             myo_device = await BleakScanner.find_device_by_address(MYO_ADDRESS)
             if not myo_device:
                 self.error_signal.emit("Could not find Myo device.")
-                return
+                return                # ← INDENTED under the if-block // SonoAI
 
-            async with Myo(myo_device) as myo:
-                await asyncio.sleep(0.5)
+        # 2 Keep the connection alive
+            async with Myo(myo_device) as myo:   # ← all the code below this line
+            #     MUST be indented one level further → SonoAI
+                if hasattr(myo, "wait_for_services"):
+                    await myo.wait_for_services()
+                else:
+                    await asyncio.sleep(0.3)
+
+            # Never let the armband sleep
                 await myo.set_sleep_mode(SleepMode.NEVER_SLEEP)
-                await asyncio.sleep(0.25)
 
+            # Explicitly enable EMG notifications
+                await myo.set_mode(emg_mode=EmgMode.SMOOTH)
+                #await myo.emg_notifications(True)
+
+        # 3 EMG callback
                 @myo.on_emg_smooth
                 def on_emg_smooth(emg_data):
+                    if self.predictor.is_calibrating:
+                        self.predictor.calibrate(emg_data)
+                        return
                     norm = math.sqrt(sum(e ** 2 for e in emg_data))
-                    max_norm = 300  # Adjust based on your expected maximum norm
-                    strength = min(100, (norm / max_norm) * 100)
-                    self.progress_signal.emit(int(strength))
-                    
-                    prediction = self.predictor.add_data(emg_data)
-                    if prediction:
-                        class_id, gesture_name = prediction
-                        self.prediction_signal.emit(f"Predicted: {gesture_name} (class {class_id})")
+                    self.progress_signal.emit(int(min(100, (norm / 300) * 100)))
+                    if (pred := self.predictor.add_data(emg_data)):
+                        cid, gname = pred
+                        self.prediction_signal.emit(f"Predicted: {gname} (class {cid})")
 
-                await myo.set_mode(emg_mode=EmgMode.SMOOTH)
+        # 4  Calibration
+                self.status_signal.emit("READY_FOR_CAL")          # show wizard
+                await self._cal_start.wait()                      # ← waits for OK
+                print("DEBUG  ➜  Event released, starting calibrate_gestures")   # <-- add
+
+                self.status_signal.emit("▼ Calibration starting …")
+                await calibrate_gestures(
+                        myo,
+                        self.predictor,
+                        cue=self.status_signal.emit,
+                        log=self.status_signal.emit
+                )
+                self.status_signal.emit("✓ Calibration complete!")
+                #if self.connect_window:            # auto-close spinner
+                #    self.connect_window.close()
+                #    self.connect_window = None
+
+        # 5 Main loop
                 while self._is_running:
                     await asyncio.sleep(0.01)
+
         except Exception as e:
             self.error_signal.emit(str(e))
-
-    def stop(self):
-        self._is_running = False
-
+        
+    @pyqtSlot()
+    def start_calibration(self):
+        """Called by the wizard when the user clicks OK."""
+        print("DEBUG  ➜  start_calibration() got the click")   # <-- add
+        self._cal_start.set()
+    
     def run(self):
         asyncio.run(self.run_async())
+        
+    # ------------------------------------------------------------------ Qt slot
+    def stop(self):
+        """Called from the GUI when the Stop button is pressed."""
+        self._is_running = False
+
+###############################################################################
+# Calibration Wizard Dialog
+###############################################################################
+class CalibrationDialog(QMainWindow):
+    proceed_clicked = pyqtSignal()      # emitted when user clicks OK
+
+    def __init__(self):
+        super().__init__()
+        self.setWindowTitle("Calibration")
+        self.resize(520, 340)
+
+        central = QWidget(self)
+        self.setCentralWidget(central)
+        vbox = QVBoxLayout(central)
+        vbox.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+        # headline
+        self.head = QLabel("Calibration")
+        self.head.setFont(QFont(GARAMOND_BOOK_FAMILY, 30, QFont.Weight.Bold))
+        self.head.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        vbox.addWidget(self.head)
+
+        # body
+        self.body = QLabel(
+            "You need to calibrate your EMG armband.\n"
+            "Follow the on-screen instructions and\n"
+            "we'll get you up-and-running in no time."
+        )
+
+        self.body.setFont(QFont(GARAMOND_BOOK_FAMILY, 16))
+        self.body.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.body.setWordWrap(True)
+        vbox.addWidget(self.body)
+
+        # icon
+        self.icon = QLabel()
+        self.icon.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        vbox.addWidget(self.icon)
+
+        # countdown
+        self.timer_lbl = QLabel("")
+        self.timer_lbl.setFont(QFont(GARAMOND_BOOK_FAMILY, 22))
+        self.timer_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        vbox.addWidget(self.timer_lbl)
+
+        # OK button
+        self.ok_btn = QPushButton("OK")
+        self.ok_btn.clicked.connect(self._on_ok)
+        vbox.addWidget(self.ok_btn)
+
+        self.countdown = None
+        
+    @pyqtSlot()                              # NEW
+    def _on_ok(self):
+        self.proceed_clicked.emit()
+        self.ok_btn.setEnabled(False)
+
+    # called for every cue
+    def show_gesture(self, title: str, seconds: int, icon_file: str):
+        self.head.setText(title)
+        self.body.setText(f"Hold for {seconds} s …")
+        pix = QPixmap(os.path.join(MEDIA_PATH, "gestures", icon_file))
+        self.icon.setPixmap(pix.scaled(140, 140,
+                                        Qt.AspectRatioMode.KeepAspectRatio,
+                                        Qt.TransformationMode.SmoothTransformation))
+        # live countdown
+        if self.countdown:
+            self.countdown.stop()
+        self.time_left = seconds
+        self.timer_lbl.setText(str(self.time_left))
+        self.countdown = QTimer(self)
+        self.countdown.timeout.connect(self._tick)
+        self.countdown.start(1000)
+
+    def _tick(self):
+        self.time_left -= 1
+        self.timer_lbl.setText(str(self.time_left) if self.time_left > 0 else "✓")
+        if self.time_left <= 0 and self.countdown:
+            self.countdown.stop()
 
 ###############################################################################
 # Animated Connection Screen
@@ -346,7 +483,11 @@ class EMGControllerMainWindow(QMainWindow):
         about_box.exec()
 
     def start_prediction(self):
-        predictor = GesturePredictor(prediction_interval=1.0)
+        predictor = GesturePredictor(
+            prediction_interval=1.0,
+            threshold=0.90,          # <-- tweak if you like
+            num_repetitions=1        # <-- how many reps per gesture during calibration
+        )
         self.worker = PredictionWorker(predictor)
         self.worker.moveToThread(self.worker_thread)
         
@@ -354,6 +495,8 @@ class EMGControllerMainWindow(QMainWindow):
         self.worker.prediction_signal.connect(self.update_prediction)
         self.worker.progress_signal.connect(self.update_progress)
         self.worker.error_signal.connect(self.handle_error)
+        # was: self.worker.status_signal.connect(self.log_area.append)
+        self.worker.status_signal.connect(self.handle_status)
         
         self.worker_thread.start()
         
@@ -371,9 +514,9 @@ class EMGControllerMainWindow(QMainWindow):
         self.start_button.setEnabled(True)
         self.stop_button.setEnabled(False)
         self.log_area.append("Stopped prediction.")
-        if self.connect_window:
-            self.connect_window.close()
-            self.connect_window = None
+        #if self.connect_window:
+        #    self.connect_window.close()
+        #    self.connect_window = None
 
     def update_prediction(self, text):
         # Update the prediction label and append the prediction with a timestamp to the log.
@@ -386,6 +529,51 @@ class EMGControllerMainWindow(QMainWindow):
 
     def update_progress(self, value):
         self.progress_bar.setValue(value)
+    
+    @pyqtSlot()                      # relay that runs in the GUI thread
+    def _relay_start_cal(self):
+        self.worker.start_calibration()     # safe: Qt auto-queues to worker thread
+
+        # ---------------------------------------------------------------- status
+    def handle_status(self, text: str):
+        """Drive the calibration wizard and log everything else."""
+        # 1) show the wizard intro
+        if text == "READY_FOR_CAL":
+            if self.connect_window:          # close spinner
+                self.connect_window.close()
+                self.connect_window = None
+
+            self.cal_dlg = CalibrationDialog()
+            #self.cal_dlg.proceed_clicked.connect(
+            #    self.worker.start_calibration,
+            #    Qt.ConnectionType.QueuedConnection
+            #)
+            self.cal_dlg.proceed_clicked.connect(self._relay_start_cal)
+            self.cal_dlg.show()
+            return
+
+        # 2) per-gesture cue  (format:  CUE|<cid>|<name>|<seconds>)
+        if text.startswith("CUE|"):
+            _, cid, gname, secs = text.split("|")
+            icon_file = ICON_PATHS[int(cid)]
+            self.cal_dlg.show_gesture(
+                gname.title(),
+                int(secs),
+                icon_file
+            )
+            return
+
+        # 3) calibration finished
+        if text == "CAL_DONE":
+            self.cal_dlg.head.setText("Calibration complete!")
+            self.cal_dlg.body.setText("You’re ready to go.")
+            self.cal_dlg.ok_btn.hide()
+            QTimer.singleShot(1500, self.cal_dlg.close)
+            return
+
+        # 4) anything else → plain log
+        self.log_area.append(text)
+
 
     def handle_error(self, error_text):
         self.log_area.append("Error: " + error_text)

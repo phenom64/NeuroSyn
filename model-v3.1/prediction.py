@@ -3,9 +3,11 @@ import time
 import asyncio
 import numpy as np
 import pandas as pd
-import tensorflow as tf
 import pickle
 from collections import deque
+
+import torch
+
 from bleak import BleakScanner
 from pymyo import Myo
 from pymyo.types import EmgMode, SleepMode
@@ -15,7 +17,8 @@ from constants import MYO_ADDRESS, CLASSES  # MODEL_PATH and METADATA_PATH are n
 # Determine the base directory (directory where this script is located)
 BASE_PATH = os.path.dirname(os.path.abspath(__file__))
 MODEL_DIR = os.path.join(BASE_PATH, "model")
-MODEL_FILE = os.path.join(MODEL_DIR, "model.h5")
+# For PyTorch, assume the model is saved as a .pt file
+MODEL_FILE = os.path.join(MODEL_DIR, "model.pt")
 METADATA_FILE = os.path.join(MODEL_DIR, "metadata.pkl")
 
 class GesturePredictor:
@@ -25,8 +28,11 @@ class GesturePredictor:
         self.prediction_interval = prediction_interval
         self.last_prediction_time = 0
         
-        # Load the model and metadata using relative paths
-        self.model = tf.keras.models.load_model(MODEL_FILE)
+        # Load the PyTorch model and set it to evaluation mode.
+        self.model = torch.load(MODEL_FILE, map_location=torch.device('cpu'))
+        self.model.eval()
+        
+        # Load the scaler and column names from the metadata file.
         with open(METADATA_FILE, 'rb') as f:
             self.scaler, self.columns = pickle.load(f)
             
@@ -35,27 +41,32 @@ class GesturePredictor:
         if len(self.data_buffer) < self.window_size:
             return None
             
-        # Convert buffer to a numpy array
+        # Convert buffer to a numpy array.
         window_data = np.array(list(self.data_buffer))
         
-        # Calculate RMS features
+        # Calculate RMS features.
         rms_features = np.sqrt(np.mean(np.square(window_data), axis=0))
         
-        # Create a DataFrame with the correct column names
+        # Create a DataFrame with the correct column names.
         features_df = pd.DataFrame([rms_features], columns=self.columns)
         
-        # Scale the features
+        # Scale the features.
         features_scaled = self.scaler.transform(features_df)
         
-        # Make prediction
-        prediction = self.model.predict(features_scaled, verbose=0)
-        predicted_class = np.argmax(prediction[0])
+        # Convert the scaled features to a PyTorch tensor.
+        features_tensor = torch.tensor(features_scaled, dtype=torch.float32)
+        
+        # Get model prediction.
+        with torch.no_grad():
+            prediction = self.model(features_tensor)
+        # Convert logits to predicted class.
+        predicted_class = torch.argmax(prediction, dim=1).item()
         
         return predicted_class, CLASSES[predicted_class]
     
     def add_data(self, emg_data):
         """
-        Add new EMG data to the buffer and return prediction if enough time has passed.
+        Add new EMG data to the buffer and return a prediction if enough time has passed.
         Returns prediction only once per prediction_interval seconds.
         """
         self.data_buffer.append(emg_data)
@@ -72,7 +83,7 @@ class GesturePredictor:
 
 async def main():
     try: 
-        # Find and connect to Myo device
+        # Find and connect to Myo device.
         myo_device = await BleakScanner.find_device_by_address(MYO_ADDRESS)
         if not myo_device:
             raise RuntimeError(f"Could not find Myo device with address {MYO_ADDRESS}")
@@ -87,14 +98,13 @@ async def main():
             
             @myo.on_emg_smooth
             def on_emg_smooth(emg_data):
-                # Process the EMG data
+                # Process the EMG data.
                 prediction = predictor.add_data(emg_data)
-                
                 if prediction:
                     class_id, gesture_name = prediction
                     print(f"\rPredicted gesture: {gesture_name} (class {class_id})", end="")
         
-            # Set EMG mode and collect data
+            # Set EMG mode and collect data.
             await myo.set_mode(emg_mode=EmgMode.SMOOTH)
             
             try:
