@@ -1,0 +1,22 @@
+# NeuroSyn project dependencies
+
+# GUI
+PyQt6>=6.0
+
+# Bluetooth LE scanning
+bleak>=0.20
+
+# Myo armband interface
+pymyo>=0.4
+
+# Numerical & data handling
+numpy>=1.19
+pandas>=1.1
+
+# Machine learning
+tensorflow>=2.8
+scikit-learn>=1.0
+
+# (if you use any additional plotting or image libs, add here)
+# e.g. Pillow for any image‐manipulation
+# Pillow>=8.0
