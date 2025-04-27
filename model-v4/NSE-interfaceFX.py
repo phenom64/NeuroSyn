@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Artemis Project - EMGController GUI
+NeuroSyn ReTrain – Syndromatic Home Physio GUI
 Created by Syndromatic Inc. / Kavish Krishnakumar (2025)
 ---------------------------------------------------------------------------
 1) Welcome window (scaled icon, title, instructions)
@@ -27,9 +27,9 @@ import platform
 
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QLabel, QPushButton,
-    QProgressBar, QTextEdit, QHBoxLayout, QMenu, QGraphicsOpacityEffect, QGraphicsDropShadowEffect
+    QProgressBar, QTextEdit, QSizePolicy, QHBoxLayout, QMessageBox, QGraphicsOpacityEffect, QGraphicsDropShadowEffect
 )
-from PyQt6.QtGui import QPixmap, QAction, QIcon, QFont, QFontDatabase, QColor
+from PyQt6.QtGui import QPixmap, QAction, QIcon, QFont, QFontDatabase, QColor, QFontMetrics
 from PyQt6.QtCore import (
     QThread, pyqtSignal, pyqtSlot, QObject, Qt, QTimer, QEasingCurve, QPropertyAnimation,
     QSequentialAnimationGroup, QParallelAnimationGroup, QPauseAnimation, QRect
@@ -75,95 +75,118 @@ DOTMATRIX_FAMILY = None                 # Loaded from DOTMATRI.ttf
 ###############################################################################
 class PredictionWorker(QObject):
     prediction_signal = pyqtSignal(str)
-    progress_signal = pyqtSignal(int)
-    error_signal = pyqtSignal(str)
-    status_signal       = pyqtSignal(str)
+    progress_signal   = pyqtSignal(int)
+    error_signal      = pyqtSignal(str)
+    status_signal     = pyqtSignal(str)
     
     def __init__(self, predictor: GesturePredictor):
         super().__init__()
-        self.predictor = predictor
+        self.predictor   = predictor
         self._is_running = True
-        self._cal_start = asyncio.Event()   # waits until user clicks OK
+        self._cal_start  = asyncio.Event()   # fires on OK
+        self._cancel_cal = asyncio.Event()   # fires on Cancel
 
     async def run_async(self):
-        self._cal_start.clear()      # reset before we wait again
+        # reset events each time we start
+        self._cal_start.clear()
+        self._cancel_cal.clear()
+
         try:
-        # 1 Find the armband
+            # 1) Find the armband
             myo_device = await BleakScanner.find_device_by_address(MYO_ADDRESS)
             if not myo_device:
                 self.error_signal.emit("Could not find Myo device.")
-                return                # ← INDENTED under the if-block // SonoAI
+                return
 
-        # 2 Keep the connection alive
-            async with Myo(myo_device) as myo:   # ← all the code below this line
-            #     MUST be indented one level further → SonoAI
+            # 2) Connect & configure
+            async with Myo(myo_device) as myo:
                 if hasattr(myo, "wait_for_services"):
                     await myo.wait_for_services()
                 else:
                     await asyncio.sleep(0.3)
-
-            # Never let the armband sleep
                 await myo.set_sleep_mode(SleepMode.NEVER_SLEEP)
-
-            # Explicitly enable EMG notifications
                 await myo.set_mode(emg_mode=EmgMode.SMOOTH)
-                #await myo.emg_notifications(True)
 
-        # 3 EMG callback
+                # EMG callback for both calibration & prediction
                 @myo.on_emg_smooth
                 def on_emg_smooth(emg_data):
                     if self.predictor.is_calibrating:
                         self.predictor.calibrate(emg_data)
                         return
-                    norm = math.sqrt(sum(e ** 2 for e in emg_data))
+                    norm = math.sqrt(sum(e**2 for e in emg_data))
                     self.progress_signal.emit(int(min(100, (norm / 300) * 100)))
                     if (pred := self.predictor.add_data(emg_data)):
                         cid, gname = pred
                         self.prediction_signal.emit(f"Predicted: {gname} (class {cid})")
 
-        # 4  Calibration
-                self.status_signal.emit("READY_FOR_CAL")          # show wizard
-                await self._cal_start.wait()                      # ← waits for OK
-                print("DEBUG  ➜  Event released, starting calibrate_gestures")   # <-- add
+                # 3) GUI → “ready to calibrate”
+                self.status_signal.emit("READY_FOR_CAL")
 
+                # wait for either Start or Cancel
+                start_task  = asyncio.create_task(self._cal_start.wait())
+                cancel_task = asyncio.create_task(self._cancel_cal.wait())
+                done, pending = await asyncio.wait({start_task, cancel_task},
+                                                   return_when=asyncio.FIRST_COMPLETED)
+                for t in pending: t.cancel()
+
+                # if canceled before starting, bail out
+                if cancel_task in done:
+                    return
+
+                # 4) user clicked Start → run calibration
                 self.status_signal.emit("▼ Calibration starting …")
-                await calibrate_gestures(
-                        myo,
-                        self.predictor,
-                        cue=self.status_signal.emit,
-                        log=self.status_signal.emit
+                cal_task     = asyncio.create_task(
+                    calibrate_gestures(myo,
+                                       self.predictor,
+                                       cue=self.status_signal.emit,
+                                       log=self.status_signal.emit)
                 )
-                self.status_signal.emit("✓ Calibration complete!")
-                #if self.connect_window:            # auto-close spinner
-                #    self.connect_window.close()
-                #    self.connect_window = None
+                cancel_task2 = asyncio.create_task(self._cancel_cal.wait())
+                done, pending = await asyncio.wait({cal_task, cancel_task2},
+                                                   return_when=asyncio.FIRST_COMPLETED)
+                for t in pending: t.cancel()
 
-        # 5 Main loop
+                # if canceled during calibration, abort
+                if cancel_task2 in done:
+                    cal_task.cancel()
+                    return
+
+                # calibration finished
+                self.status_signal.emit("✓ Calibration complete!")
+                self.status_signal.emit("CAL_DONE")
+
+                # 5) prediction loop
                 while self._is_running:
                     await asyncio.sleep(0.01)
 
         except Exception as e:
             self.error_signal.emit(str(e))
-        
+
     @pyqtSlot()
     def start_calibration(self):
-        """Called by the wizard when the user clicks OK."""
-        print("DEBUG  ➜  start_calibration() got the click")   # <-- add
+        """Called by the wizard when the user clicks Start/OK."""
         self._cal_start.set()
-    
+
+    @pyqtSlot()
+    def cancel_calibration(self):
+        """Called by the wizard when the user clicks Cancel."""
+        self._cancel_cal.set()
+
     def run(self):
         asyncio.run(self.run_async())
-        
-    # ------------------------------------------------------------------ Qt slot
+
     def stop(self):
-        """Called from the GUI when the Stop button is pressed."""
+        """Called from the GUI when Stop Exercise is pressed."""
         self._is_running = False
+        # also abort any in-flight calibration
+        self._cancel_cal.set()
 
 ###############################################################################
 # Calibration Wizard Dialog
 ###############################################################################
 class CalibrationDialog(QMainWindow):
-    proceed_clicked = pyqtSignal()      # emitted when user clicks OK
+    proceed_clicked = pyqtSignal()  # Start/OK
+    cancel_clicked  = pyqtSignal()  # Cancel
 
     def __init__(self):
         super().__init__()
@@ -174,68 +197,140 @@ class CalibrationDialog(QMainWindow):
         self.setCentralWidget(central)
         vbox = QVBoxLayout(central)
         vbox.setAlignment(Qt.AlignmentFlag.AlignCenter)
-       # ─── Add the SetupAssistant logo above the title ────────────
+
+        # Logo
         self.logo = QLabel()
         logo_pix = QPixmap(os.path.join(MEDIA_PATH, "SetupAssistant.png"))
-        self.logo.setPixmap(
-            logo_pix.scaled(100, 100,
-                            Qt.AspectRatioMode.KeepAspectRatio,
-                            Qt.TransformationMode.SmoothTransformation)
-        )
+        self.logo.setPixmap(logo_pix.scaled(100, 100, Qt.AspectRatioMode.KeepAspectRatio,
+                                            Qt.TransformationMode.SmoothTransformation))
         self.logo.setAlignment(Qt.AlignmentFlag.AlignCenter)
         vbox.addWidget(self.logo)
 
-        # headline
+        # Headline
         self.head = QLabel("Calibration Assistant")
         self.head.setFont(QFont(GARAMOND_BOOK_FAMILY, 30, QFont.Weight.Bold))
         self.head.setAlignment(Qt.AlignmentFlag.AlignCenter)
         vbox.addWidget(self.head)
 
-        # body
+        # Body
         self.body = QLabel(
             "You need to calibrate your EMG armband.\n"
-            "Follow the on-screen instructions and\n"
-            "we'll get you up-and-running in no time."
+            "Follow the on-screen instructions and we'll get you up-and-running."
         )
-
-        self.body.setFont(QFont(GARAMOND_BOOK_FAMILY, 16))
+        self.body.setFont(QFont(GARAMOND_BOOK_FAMILY, 14))
         self.body.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.body.setWordWrap(True)
         vbox.addWidget(self.body)
 
-        # icon
+        # Gesture icon
         self.icon = QLabel()
         self.icon.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.icon.hide()
         vbox.addWidget(self.icon)
 
-        # countdown
+        # Countdown
         self.timer_lbl = QLabel("")
         self.timer_lbl.setFont(QFont(GARAMOND_BOOK_FAMILY, 22))
         self.timer_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.timer_lbl.hide()
         vbox.addWidget(self.timer_lbl)
 
-        # OK button
-        self.ok_btn = QPushButton("OK")
+        # Buttons
+        btn_layout = QHBoxLayout()
+        btn_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+        self.ok_btn = QPushButton("Start")
         self.ok_btn.clicked.connect(self._on_ok)
-        vbox.addWidget(self.ok_btn)
+        btn_layout.addWidget(self.ok_btn)
+
+        self.cancel_btn = QPushButton("Cancel")
+        self.cancel_btn.clicked.connect(self._on_cancel)
+        btn_layout.addWidget(self.cancel_btn)
+
+        vbox.addLayout(btn_layout)
 
         self.countdown = None
-        
-    @pyqtSlot()                              # NEW
-    def _on_ok(self):
-        self.proceed_clicked.emit()
-        self.ok_btn.setEnabled(False)
+        self._cancelled = False
+        self._finished   = False    # NEW: set when calibration really finishes
 
-    # called for every cue
+    def closeEvent(self, event):
+        # Treat window-close (“X”) as Cancel
+        if self._finished:
+            return super().closeEvent(event)
+        if not self._cancelled:
+            reply = QMessageBox.question(
+                self, "Cancel Calibration?",
+                "Are you sure you want to cancel Calibration?\n\n"
+                "Quitting Calibration Assistant cancels the calibration process "
+                "and prevents you from using NeuroSyn ReTrain.",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+            )
+            if reply == QMessageBox.StandardButton.Yes:
+                event.ignore()
+                self._show_cancelled_screen()
+            else:
+                event.ignore()
+        else:
+            event.accept()
+
+    @pyqtSlot()
+    def _on_ok(self):
+        if not self._cancelled:
+            self.proceed_clicked.emit()
+            self.ok_btn.setEnabled(False)
+        else:
+            self.close()
+
+    @pyqtSlot()
+    def _on_cancel(self):
+        reply = QMessageBox.question(
+            self, "Cancel Calibration?",
+            "Are you sure you want to cancel Calibration?\n\n"
+            "Quitting Calibration Assistant cancels the calibration process "
+            "and prevents you from using NeuroSyn ReTrain.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+        )
+        if reply == QMessageBox.StandardButton.Yes:
+            self._show_cancelled_screen()
+
+    def _show_cancelled_screen(self):
+        self._cancelled = True
+
+        # reset UI
+        self.logo.show()
+        self.icon.hide()
+        self.timer_lbl.hide()
+        self.cancel_btn.hide()
+
+        # update text
+        self.head.setText("Calibration cancelled")
+        self.body.setText(
+            "Calibration Assistant was interrupted and calibration has been cancelled.\n\n"
+            "Click 'OK' to exit."
+        )
+
+        # re-wire OK to close
+        self.ok_btn.setEnabled(True)
+        try: self.ok_btn.clicked.disconnect()
+        except: pass
+        self.ok_btn.setText("OK")
+        self.ok_btn.clicked.connect(self.close)
+
+        # notify owner
+        self.cancel_clicked.emit()
+
     def show_gesture(self, title: str, seconds: int, icon_file: str):
         self.logo.hide()
         self.head.setText(title)
         self.body.setText(f"Hold for {seconds} s …")
+
         pix = QPixmap(os.path.join(MEDIA_PATH, "gestures", icon_file))
         self.icon.setPixmap(pix.scaled(140, 140,
-                                        Qt.AspectRatioMode.KeepAspectRatio,
-                                        Qt.TransformationMode.SmoothTransformation))
-        # live countdown
+                                       Qt.AspectRatioMode.KeepAspectRatio,
+                                       Qt.TransformationMode.SmoothTransformation))
+        self.icon.show()
+        self.timer_lbl.show()
+
         if self.countdown:
             self.countdown.stop()
         self.time_left = seconds
@@ -394,7 +489,7 @@ class ConnectionWindow(QMainWindow):
 class EMGControllerMainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Artemis Project - EMGController")
+        self.setWindowTitle("NeuroSyn ReTrain")
         self.resize(600, 400)
         self._create_menubar()
 
@@ -422,12 +517,12 @@ class EMGControllerMainWindow(QMainWindow):
         
         layout.addLayout(progress_layout)
         
-        self.start_button = QPushButton("Start Prediction")
+        self.start_button = QPushButton("Start Exercise")
         self.start_button.setFont(QApplication.font("QPushButton"))
         self.start_button.clicked.connect(self.start_prediction)
         layout.addWidget(self.start_button)
         
-        self.stop_button = QPushButton("Stop Prediction")
+        self.stop_button = QPushButton("Stop Exercise")
         self.stop_button.setFont(QApplication.font("QPushButton"))
         self.stop_button.clicked.connect(self.stop_prediction)
         self.stop_button.setEnabled(False)
@@ -472,11 +567,11 @@ class EMGControllerMainWindow(QMainWindow):
     def _create_menubar(self):
         menubar = self.menuBar()
         if platform.system() == "Darwin":
-            about_menu = menubar.addMenu("EMGController")
+            about_menu = menubar.addMenu("NeuroSyn")
         else:
             about_menu = menubar.addMenu("Help")
 
-        about_action = QAction("About EMGController", self)
+        about_action = QAction("About NeuroSyn", self)
         about_action.setMenuRole(QAction.MenuRole.AboutRole)
         about_action.triggered.connect(self.show_about_dialog)
         about_menu.addAction(about_action)
@@ -484,12 +579,12 @@ class EMGControllerMainWindow(QMainWindow):
     def show_about_dialog(self):
         from PyQt6.QtWidgets import QMessageBox
         about_box = QMessageBox(self)
-        about_box.setWindowTitle("About EMGController")
+        about_box.setWindowTitle("About NeuroSyn ReTrain")
         about_box.setText(
-            "Artemis Project - EMGController\n"
-            "Interface created by Kavish Krishnakumar\n\n"
-            "This application demonstrates real-time Myo EMG gesture prediction\n"
-            "with a sleek SynOS-style UI, an animated connection screen, and more!"
+            "NeuroSyn ReTrain\n"
+            "Developed by Syndromatic Inc. / Kavish Krishnakumar\n\n"
+            "A home-based physiotherapy assistant using surface EMG\n"
+            "and real-time AI-powered feedback to guide your exercises."
         )
         about_box.exec()
 
@@ -537,6 +632,25 @@ class EMGControllerMainWindow(QMainWindow):
         if self.connect_window:
             self.connect_window.close()
             self.connect_window = None
+    
+    @pyqtSlot()
+    def _relay_cancel_cal(self):
+        # tell worker to abort calibration/prediction
+        if self.worker:
+            self.worker.cancel_calibration()
+        # show cancelled dialog if still visible
+        if hasattr(self, 'cal_dlg') and self.cal_dlg.isVisible():
+            self.cal_dlg._show_cancelled_screen()
+        dlg = self.cal_dlg
+        if not getattr(dlg, '_has_logged_cancel', False):
+            self.log_area.append("Calibration cancelled by user.")
+            dlg._has_logged_cancel = True
+
+            try:
+                # disconnect so we don’t log again
+                self.cal_dlg.cancel_clicked.disconnect(self._relay_cancel_cal)
+            except Exception:
+                pass
 
     def update_progress(self, value):
         self.progress_bar.setValue(value)
@@ -550,48 +664,49 @@ class EMGControllerMainWindow(QMainWindow):
         """Drive the calibration wizard and log everything else."""
         # 1) show the wizard intro
         if text == "READY_FOR_CAL":
-            if self.connect_window:          # close spinner
+            if self.connect_window:
                 self.connect_window.close()
                 self.connect_window = None
 
             self.cal_dlg = CalibrationDialog()
-            #self.cal_dlg.proceed_clicked.connect(
-            #    self.worker.start_calibration,
-            #    Qt.ConnectionType.QueuedConnection
-            #)
+            self.cal_dlg.proceed_clicked.connect(
+                self._relay_start_cal,
+                Qt.ConnectionType.QueuedConnection
+            )
+            self.cal_dlg.cancel_clicked.connect(
+                self._relay_cancel_cal,
+                Qt.ConnectionType.QueuedConnection
+            )
             self.cal_dlg.logo.show()
-            self.cal_dlg.proceed_clicked.connect(self._relay_start_cal)
+            self.cal_dlg.ok_btn.setText("Start")
+            self.cal_dlg.ok_btn.show()
+            self.cal_dlg.cancel_btn.show()
             self.cal_dlg.show()
             return
 
-        # 2) per-gesture cue  (format:  CUE|<cid>|<name>|<seconds>)
+        # 2) per-gesture cue (CUE|cid|name|secs)
         if text.startswith("CUE|"):
             self.cal_dlg.logo.hide()
             _, cid, gname, secs = text.split("|")
             icon_file = ICON_PATHS[int(cid)]
-            self.cal_dlg.show_gesture(
-                gname.title(),
-                int(secs),
-                icon_file
-            )
+            self.cal_dlg.show_gesture(gname.title(), int(secs), icon_file)
             return
 
         # 3) calibration finished
         if text == "CAL_DONE":
-            # hide the per‐gesture icon and countdown
             self.cal_dlg.icon.hide()
             self.cal_dlg.timer_lbl.hide()
-            # show the SetupAssistant logo again
             self.cal_dlg.logo.show()
             self.cal_dlg.head.setText("Calibration complete!")
             self.cal_dlg.body.setText("You’re ready to go.")
             self.cal_dlg.ok_btn.hide()
+            self.cal_dlg.cancel_btn.hide()
+            self.cal_dlg._finished = True
             QTimer.singleShot(1500, self.cal_dlg.close)
             return
 
-        # 4) anything else → plain log
+        # 4) any other status → log it
         self.log_area.append(text)
-
 
     def handle_error(self, error_text):
         self.log_area.append("Error: " + error_text)
@@ -606,8 +721,8 @@ class EMGControllerMainWindow(QMainWindow):
 class WelcomeWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Artemis Project - EMGController")
-        self.resize(500, 400)
+        self.setWindowTitle("Welcome to NeuroSyn ReTrain")
+        self.resize(600,500)
 
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
@@ -626,25 +741,35 @@ class WelcomeWindow(QMainWindow):
         welcome_label.setFont(QFont(GARAMOND_BOOK_FAMILY, 30, QFont.Weight.Bold))
         welcome_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(welcome_label)
+
+        # compute its pixel width
+        fm = QFontMetrics(welcome_label.font())
+        title_width = fm.horizontalAdvance(welcome_label.text())
         
         intro_text = QLabel(
-            "Welcome to the Artemis Project's EMGController App.\n"
-            "Ensure you have your MYO EMG Armband close to you,\n"
-            "and click 'Next' to continue."
+            "Welcome to NeuroSyn Retrain,\n"
+            "A home-based physiotherapy assistant that uses your EMG armband\n"
+            "to monitor muscle activity and guide you through exercises.\n\n\n"
+            "Please connect your EMG device, then click Start to begin.\n"
         )
-        intro_text.setFont(QFont(GARAMOND_BOOK_FAMILY, 16))
+        intro_text.setFont(QFont(GARAMOND_BOOK_FAMILY, 14))
         intro_text.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(intro_text)
         
-        self.next_button = QPushButton("Next")
+        self.next_button = QPushButton("Get Started")
         self.next_button.setFont(QApplication.font("QPushButton"))
+        self.next_button.setFixedWidth(title_width)
+        self.next_button.setSizePolicy(
+            QSizePolicy.Policy.Fixed,
+            QSizePolicy.Policy.Fixed
+        )
         self.next_button.clicked.connect(self.gotoMainWindow)
-        layout.addWidget(self.next_button)
+        layout.addWidget(self.next_button, alignment=Qt.AlignmentFlag.AlignCenter)
         
         layout.addStretch(1)
         
-        copyright_label = QLabel("UI Copyright © 2025 Syndromatic Inc.")
-        copyright_label.setFont(QFont(GARAMOND_BOOK_FAMILY, 12))
+        copyright_label = QLabel("Copyright © 2025 Syndromatic Inc. / Kavish Krishnakumar")
+        copyright_label.setFont(QFont(GARAMOND_BOOK_FAMILY, 10))
         copyright_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(copyright_label)
 
@@ -661,8 +786,7 @@ def main():
     
     # Set the organization & application name for proper macOS labeling
     app.setOrganizationName("Syndromatic Inc.")
-    app.setApplicationName("EMGController")
-    
+    app.setApplicationName("NeuroSyn ReTrain")    
     global GARAMOND_LIGHT_FAMILY, GARAMOND_LIGHT_ITALIC_FAMILY, GARAMOND_BOOK_FAMILY, DOTMATRIX_FAMILY
     
     # Load ITC Garamond fonts
