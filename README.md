@@ -31,7 +31,7 @@
 ## 💾 Installation
 
 ```bash
-git clone https://github.com/your-username/NeuroSyn.git
+git clone https://github.com/phenom64/NeuroSyn.git
 cd NeuroSyn
 pip install -r requirements.txt
 ```
