@@ -1,4 +1,0 @@
-bleak==0.22.3
-pandas==2.2.3
-pymyo==2.2.3
-tensorflow==2.18.0
