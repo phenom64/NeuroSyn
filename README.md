@@ -32,11 +32,11 @@
 
 ```bash
 git clone https://github.com/phenom64/NeuroSyn.git
-cd NeuroSyn
+cd NeuroSyn/model-v4
 pip install -r requirements.txt
 ```
-1. Set MYO_ADDRESS in constants.py to your armband's identifier
-2. Place exercise icons under NSEmedia/gestures/ and update ICON_PATHS in constants.py
+1. Set MYO_ADDRESS in constants.py to your armband's identifier (MAC Address)
+2. [For developers/Forks] Place exercise icons under NSEmedia/gestures/ and update ICON_PATHS in constants.py
 
 ## 🚀 Launch
 
