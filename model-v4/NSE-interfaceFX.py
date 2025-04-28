@@ -26,10 +26,10 @@ import math
 import platform
 
 from PyQt6.QtWidgets import (
-    QApplication, QMainWindow, QWidget, QVBoxLayout, QLabel, QPushButton,
+    QApplication, QMainWindow, QWidget, QVBoxLayout, QLabel, QPushButton, QStyleFactory,
     QProgressBar, QTextEdit, QSizePolicy, QHBoxLayout, QMessageBox, QGraphicsOpacityEffect, QGraphicsDropShadowEffect
 )
-from PyQt6.QtGui import QPixmap, QAction, QIcon, QFont, QFontDatabase, QColor, QFontMetrics
+from PyQt6.QtGui import QPixmap, QAction, QIcon, QFont, QFontDatabase, QColor, QFontMetrics, QPalette
 from PyQt6.QtCore import (
     QThread, pyqtSignal, pyqtSlot, QObject, Qt, QTimer, QEasingCurve, QPropertyAnimation,
     QSequentialAnimationGroup, QParallelAnimationGroup, QPauseAnimation, QRect
@@ -134,7 +134,7 @@ class PredictionWorker(QObject):
                     return
 
                 # 4) user clicked Start → run calibration
-                self.status_signal.emit("▼ Calibration starting …")
+                self.status_signal.emit("▼ Calibration starting...")
                 cal_task     = asyncio.create_task(
                     calibrate_gestures(myo,
                                        self.predictor,
@@ -182,7 +182,7 @@ class PredictionWorker(QObject):
         self._cancel_cal.set()
 
 ###############################################################################
-# Calibration Wizard Dialog
+# Calibration Assistant Dialog
 ###############################################################################
 class CalibrationDialog(QMainWindow):
     proceed_clicked = pyqtSignal()  # Start/OK
@@ -215,7 +215,8 @@ class CalibrationDialog(QMainWindow):
         # Body
         self.body = QLabel(
             "You need to calibrate your EMG armband.\n"
-            "Follow the on-screen instructions and we'll get you up-and-running."
+            "Follow the on-screen instructions and\n"
+            "we'll get you up-and-running in no time.\n"
         )
         self.body.setFont(QFont(GARAMOND_BOOK_FAMILY, 14))
         self.body.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -241,10 +242,12 @@ class CalibrationDialog(QMainWindow):
 
         self.ok_btn = QPushButton("Start")
         self.ok_btn.clicked.connect(self._on_ok)
+        self.NSEWidgets_emboss(self.ok_btn)
         btn_layout.addWidget(self.ok_btn)
 
         self.cancel_btn = QPushButton("Cancel")
         self.cancel_btn.clicked.connect(self._on_cancel)
+        self.NSEWidgets_emboss(self.cancel_btn)
         btn_layout.addWidget(self.cancel_btn)
 
         vbox.addLayout(btn_layout)
@@ -314,6 +317,7 @@ class CalibrationDialog(QMainWindow):
         try: self.ok_btn.clicked.disconnect()
         except: pass
         self.ok_btn.setText("OK")
+        self.NSEWidgets_emboss(self.ok_btn)
         self.ok_btn.clicked.connect(self.close)
 
         # notify owner
@@ -338,6 +342,17 @@ class CalibrationDialog(QMainWindow):
         self.countdown = QTimer(self)
         self.countdown.timeout.connect(self._tick)
         self.countdown.start(1000)
+
+    def NSEWidgets_emboss(self, btn: QPushButton):
+        """
+        Apply a subtle white emboss effect under button text
+        to mimic SynOS’s ‘Textured’ look.
+        """
+        effect = QGraphicsDropShadowEffect(btn)
+        effect.setBlurRadius(1)
+        effect.setOffset(0, 1)
+        effect.setColor(QColor(255, 255, 255, 80))
+        btn.setGraphicsEffect(effect)
 
     def _tick(self):
         self.time_left -= 1
@@ -502,28 +517,38 @@ class EMGControllerMainWindow(QMainWindow):
         self.prediction_label.setFont(QFont(GARAMOND_LIGHT_FAMILY, 18))
         layout.addWidget(self.prediction_label)
         
-        progress_layout = QHBoxLayout()
-        # "Signal Strength:" uses ITC Garamond Light Italic
-        progress_label = QLabel("Signal Strength:")
-        progress_label.setFont(QFont(GARAMOND_LIGHT_ITALIC_FAMILY, 14, QFont.Weight.Normal, True))
-        progress_layout.addWidget(progress_label)
-        
+        # ─── Signal Strength bar + percent label ────────────────────────
+        strength_layout = QHBoxLayout()
+        # “Signal Strength:” label
+        signal_lbl = QLabel("Signal Strength:")
+        signal_lbl.setFont(QFont(GARAMOND_LIGHT_ITALIC_FAMILY, 14, QFont.Weight.Normal, True))
+        strength_layout.addWidget(signal_lbl)
+
+        # ProgressBar itself (hide its internal text)
         self.progress_bar = QProgressBar()
         self.progress_bar.setMinimum(0)
         self.progress_bar.setMaximum(100)
         self.progress_bar.setValue(0)
-        self.progress_bar.setTextVisible(True)
-        progress_layout.addWidget(self.progress_bar)
-        
-        layout.addLayout(progress_layout)
+        self.progress_bar.setTextVisible(False)      # ← no overlay text
+        self.progress_bar.setFixedHeight(20)
+        strength_layout.addWidget(self.progress_bar, 1)  # stretch factor
+
+        # New QLabel to show “0%” → “100%” to the right
+        self.progress_pct = QLabel("0%")
+        self.progress_pct.setFont(QFont(GARAMOND_LIGHT_ITALIC_FAMILY, 14, QFont.Weight.Normal, True))
+        strength_layout.addWidget(self.progress_pct)
+
+        layout.addLayout(strength_layout)
         
         self.start_button = QPushButton("Start Exercise")
         self.start_button.setFont(QApplication.font("QPushButton"))
+        self.NSEWidgets_emboss(self.start_button)
         self.start_button.clicked.connect(self.start_prediction)
         layout.addWidget(self.start_button)
         
         self.stop_button = QPushButton("Stop Exercise")
         self.stop_button.setFont(QApplication.font("QPushButton"))
+        self.NSEWidgets_emboss(self.stop_button)
         self.stop_button.clicked.connect(self.stop_prediction)
         self.stop_button.setEnabled(False)
         layout.addWidget(self.stop_button)
@@ -563,6 +588,17 @@ class EMGControllerMainWindow(QMainWindow):
         self.worker = None
         self.worker_thread = QThread()
         self.connect_window = None
+
+    def NSEWidgets_emboss(self, btn: QPushButton):
+        """
+        Apply a subtle white emboss effect under button text
+        to mimic SynOS’s ‘Textured’ look.
+        """
+        effect = QGraphicsDropShadowEffect(btn)
+        effect.setBlurRadius(1)
+        effect.setOffset(0, 1)
+        effect.setColor(QColor(255, 255, 255, 80))
+        btn.setGraphicsEffect(effect)
 
     def _create_menubar(self):
         menubar = self.menuBar()
@@ -654,6 +690,7 @@ class EMGControllerMainWindow(QMainWindow):
 
     def update_progress(self, value):
         self.progress_bar.setValue(value)
+        self.progress_pct.setText(f"{value}%")
     
     @pyqtSlot()                      # relay that runs in the GUI thread
     def _relay_start_cal(self):
@@ -722,32 +759,36 @@ class WelcomeWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Welcome to NeuroSyn ReTrain")
-        self.resize(600,500)
+        self.resize(600, 500)
 
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
         layout = QVBoxLayout(central_widget)
         layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        
+
+        # App Icon
         icon_label = QLabel()
         pixmap = QPixmap(os.path.join(MEDIA_PATH, "syn app light.png"))
-        scaled_pixmap = pixmap.scaled(120, 120, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
+        scaled_pixmap = pixmap.scaled(120, 120,
+                                      Qt.AspectRatioMode.KeepAspectRatio,
+                                      Qt.TransformationMode.SmoothTransformation)
         icon_label.setPixmap(scaled_pixmap)
         icon_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(icon_label)
-        
-        # Use ITC Garamond Book Condensed for the Welcome text
+
+        # Welcome Title
         welcome_label = QLabel("Welcome")
         welcome_label.setFont(QFont(GARAMOND_BOOK_FAMILY, 30, QFont.Weight.Bold))
         welcome_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(welcome_label)
 
-        # compute its pixel width
+        # Compute its pixel width so our button matches
         fm = QFontMetrics(welcome_label.font())
         title_width = fm.horizontalAdvance(welcome_label.text())
-        
+
+        # Intro Text
         intro_text = QLabel(
-            "Welcome to NeuroSyn Retrain,\n"
+            "Welcome to NeuroSyn ReTrain,\n"
             "A home-based physiotherapy assistant that uses your EMG armband\n"
             "to monitor muscle activity and guide you through exercises.\n\n\n"
             "Please connect your EMG device, then click Start to begin.\n"
@@ -755,7 +796,8 @@ class WelcomeWindow(QMainWindow):
         intro_text.setFont(QFont(GARAMOND_BOOK_FAMILY, 14))
         intro_text.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(intro_text)
-        
+
+        # Get Started Button
         self.next_button = QPushButton("Get Started")
         self.next_button.setFont(QApplication.font("QPushButton"))
         self.next_button.setFixedWidth(title_width)
@@ -763,15 +805,30 @@ class WelcomeWindow(QMainWindow):
             QSizePolicy.Policy.Fixed,
             QSizePolicy.Policy.Fixed
         )
+        self.NSEWidgets_emboss(self.next_button)
         self.next_button.clicked.connect(self.gotoMainWindow)
         layout.addWidget(self.next_button, alignment=Qt.AlignmentFlag.AlignCenter)
-        
+
         layout.addStretch(1)
-        
-        copyright_label = QLabel("Copyright © 2025 Syndromatic Inc. / Kavish Krishnakumar")
+
+        # Footer
+        copyright_label = QLabel(
+            "Copyright © 2025 Syndromatic Inc. / Kavish Krishnakumar"
+        )
         copyright_label.setFont(QFont(GARAMOND_BOOK_FAMILY, 10))
         copyright_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(copyright_label)
+
+    def NSEWidgets_emboss(self, btn: QPushButton):
+        """
+        Apply a subtle white emboss effect under button text
+        to mimic SynOS’s ‘Textured’ look.
+        """
+        effect = QGraphicsDropShadowEffect(btn)
+        effect.setBlurRadius(1)
+        effect.setOffset(0, 1)
+        effect.setColor(QColor(255, 255, 255, 80))
+        btn.setGraphicsEffect(effect)
 
     def gotoMainWindow(self):
         self.main_window = EMGControllerMainWindow()
@@ -783,10 +840,123 @@ class WelcomeWindow(QMainWindow):
 ###############################################################################
 def main():
     app = QApplication(sys.argv)
+        # ─── auto‐detect light/dark via window background lightness ───
+    wincol = app.palette().color(QPalette.ColorRole.Window)
+    is_dark = wincol.lightness() < 128
+
+    app.setStyle(QStyleFactory.create("Fusion"))
+    pal = QPalette()
+
+    if not is_dark:
+        # ─── Light mode ────────────────────────────────────────────
+        pal.setColor(QPalette.ColorRole.Window,          QColor(240, 240, 240))
+        pal.setColor(QPalette.ColorRole.WindowText,      QColor( 33,  33,  33))
+        pal.setColor(QPalette.ColorRole.Base,            QColor(255, 255, 255))
+        pal.setColor(QPalette.ColorRole.AlternateBase,   QColor(240, 240, 240))
+        pal.setColor(QPalette.ColorRole.ToolTipBase,     QColor(255, 255, 220))
+        pal.setColor(QPalette.ColorRole.ToolTipText,     QColor(  0,   0,   0))
+        pal.setColor(QPalette.ColorRole.Text,            QColor( 33,  33,  33))
+        pal.setColor(QPalette.ColorRole.Button,          QColor(240, 240, 240))
+        pal.setColor(QPalette.ColorRole.ButtonText,      QColor( 33,  33,  33))
+        pal.setColor(QPalette.ColorRole.BrightText,      QColor(255,   0,   0))
+        pal.setColor(QPalette.ColorRole.Highlight,       QColor( 76, 163, 224))
+        pal.setColor(QPalette.ColorRole.HighlightedText, QColor(255, 255, 255))
+    else:
+        # ─── Dark mode ─────────────────────────────────────────────
+        pal.setColor(QPalette.ColorRole.Window,          QColor( 45,  45,  45))
+        pal.setColor(QPalette.ColorRole.WindowText,      QColor(220, 220, 220))
+        pal.setColor(QPalette.ColorRole.Base,            QColor( 30,  30,  30))
+        pal.setColor(QPalette.ColorRole.AlternateBase,   QColor( 45,  45,  45))
+        pal.setColor(QPalette.ColorRole.ToolTipBase,     QColor(255, 255, 220))
+        pal.setColor(QPalette.ColorRole.ToolTipText,     QColor(  0,   0,   0))
+        pal.setColor(QPalette.ColorRole.Text,            QColor(220, 220, 220))
+        pal.setColor(QPalette.ColorRole.Button,          QColor( 60,  60,  60))
+        pal.setColor(QPalette.ColorRole.ButtonText,      QColor(220, 220, 220))
+        pal.setColor(QPalette.ColorRole.BrightText,      QColor(255,   0,   0))
+        pal.setColor(QPalette.ColorRole.Highlight,       QColor( 76, 163, 224))
+        pal.setColor(QPalette.ColorRole.HighlightedText, QColor(255, 255, 255))
+    app.setPalette(pal)
+
+    # ─── Light-mode buttons ─────────────────────────────────────────────
+    light_btn_qss = """
+    QPushButton {
+      background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+          stop:0 rgba(250,250,250,255), stop:1 rgba(230,230,230,255));
+      color: #202020;
+      border: 1px solid #c0c0c0;
+      border-radius: 6px;
+      padding: 6px 14px;
+    }
+    QPushButton:hover {
+      background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+          stop:0 rgba(240,240,240,255), stop:1 rgba(215,215,215,255));
+    }
+    QPushButton:pressed {
+      background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+          stop:0 rgba(220,220,220,255), stop:1 rgba(195,195,195,255));
+    }
+    QPushButton:disabled {
+      background: rgba(245,245,245,255);
+      color: rgba(160,160,160,255);
+      border: 1px solid rgba(200,200,200,255);
+    }
+    """
+
+    # ─── Dark-mode buttons (slightly lighter) ─────────────────────────────
+    dark_btn_qss = """
+    QPushButton {
+      background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+          stop:0 rgba(85,85,85,255), stop:1 rgba(51,51,51,255));
+      color: #eeeeee;
+      border: 1px solid #202020;
+      border-radius: 6px;
+      padding: 6px 14px;
+    }
+    QPushButton:hover {
+      background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+          stop:0 rgba(100,100,100,255), stop:1 rgba(80,80,80,255));
+    }
+    QPushButton:pressed {
+      background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+          stop:0 rgba(70,70,70,255), stop:1 rgba(40,40,40,255));
+    }
+    QPushButton:disabled {
+      background: rgba(70,70,70,255);
+      color: rgba(120,120,120,255);
+      border: 1px solid rgba(30,30,30,255);
+    }
+    """
+
+    # ─── Shared styling for progress bar & log area ────────────────────
+    shared_qss = """
+    /* Progress Bar */
+    QProgressBar {
+      border: 1px solid #707070;
+      border-radius: 5px;
+      text-align: right;       /* percentage on the right */
+      padding-right: 4px;
+      background: transparent;
+    }
+    QProgressBar::chunk {
+      background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+          stop:0 rgba( 76,163,224,255), stop:1 rgba( 33,123,200,255));
+      border-radius: 5px;
+    }
+
+    /* Log area */
+    QTextEdit {
+      border: 1px solid #505050;
+      border-radius: 4px;
+    }
+    """
+
+    # ─── apply the combined stylesheet ───────────────────────────────────
+    final_qss = (dark_btn_qss if is_dark else light_btn_qss) + shared_qss
+    app.setStyleSheet(final_qss)
     
     # Set the organization & application name for proper macOS labeling
     app.setOrganizationName("Syndromatic Inc.")
-    app.setApplicationName("NeuroSyn ReTrain")    
+    app.setApplicationName("NeuroSyn Retrain")    
     global GARAMOND_LIGHT_FAMILY, GARAMOND_LIGHT_ITALIC_FAMILY, GARAMOND_BOOK_FAMILY, DOTMATRIX_FAMILY
     
     # Load ITC Garamond fonts
