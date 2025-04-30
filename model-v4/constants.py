@@ -1,5 +1,5 @@
 # constants.py for NeuroSyn Physio Project (model-v4)
-# v3: Restored original variable names for compatibility, updated values for physio.
+# v7: Updated ICON_PATHS based on user request, other paths untouched.
 
 import os
 
@@ -12,6 +12,7 @@ MYO_ADDRESS = "DD:31:D8:40:BC:22" # As provided from your previous constants
 # Directory for storing collected raw data and potentially processed data
 # Using the original variable name for compatibility.
 MAIN_PATH = "model-v4"
+BASE_DIR = os.path.dirname(os.path.abspath(__file__)) # Assumes constants.py is in the main folder
 DATA_INPUT_PATH = "data"
 MODEL_INPUT_PATH = "model"
 #if not os.path.exists(DATA_INPUT_PATH):
@@ -27,6 +28,8 @@ METADATA_FILENAME = "physio_metadata.pkl"
 MODEL_PATH = os.path.join(MODEL_INPUT_PATH, MODEL_FILENAME)
 METADATA_PATH = os.path.join(MODEL_INPUT_PATH, METADATA_FILENAME)
 DATA_PATH = os.path.join(MAIN_PATH, DATA_INPUT_PATH)
+MEDIA_DIR = os.path.join(BASE_DIR, "NSEmedia") # Used by GUI
+
 
 # --- Physiotherapy Exercise Definitions ---
 # Using the original 'CLASSES' dictionary name for compatibility,
@@ -47,27 +50,23 @@ CLASSES = {
 # Can be accessed via len(CLASSES) in other scripts if needed.
 NUM_CLASSES = len(CLASSES) # Kept for convenience if used elsewhere
 
-# --- Icon Paths (Placeholder) ---
-# Using the original variable name. Paths need to be updated
-# if/when icons are created for the physiotherapy GUI.
+# --- Icon Filenames (Relative to NSEmedia/gestures/) ---
+# The GUI script (NSE-interfaceFX.py) constructs the full path:
+# os.path.join(MEDIA_PATH, "gestures", ICON_PATHS[class_id])
+# Therefore, these should just be the filenames.
+# <<< UPDATED based on user request >>>
 ICON_PATHS = {
-    0: "icons/physio_rest.png", # Example placeholder path
-    1: "icons/physio_wrist_flexion.png",
-    2: "icons/physio_wrist_extension.png",
-    3: "icons/physio_elbow_flexion.png",
-    4: "icons/physio_elbow_extension.png",
-    5: "icons/physio_hand_close.png",
-    6: "icons/physio_hand_open.png",
-    7: "icons/physio_pronation.png",
-    8: "icons/physio_supination.png",
-    # Add more placeholders if needed, ensure keys match CLASSES
+    0: "gesture_resting.png",          # Use existing file
+    1: "physio_wrist_flexion.png",     # Use specific names
+    2: "physio_wrist_extension.png",
+    3: "physio_elbow_flexion.png",
+    4: "physio_elbow_extension.png",
+    5: "physio_hand_close.png",
+    6: "physio_hand_open.png",
+    7: "physio_pronation.png",
+    8: "physio_supination.png",
+    # IMPORTANT: Ensure these files actually exist in NSEmedia/gestures/
 }
-# Ensure the base 'icons' directory exists if these paths are used directly
-ICON_DIR = "icons"
-if not os.path.exists(ICON_DIR):
-     os.makedirs(ICON_DIR)
-     print(f"Created icon directory placeholder: {ICON_DIR}")
-
 
 # --- Data Collection Parameters ---
 # Using the original variable name 'COLLECTION_TIME' to represent
@@ -102,9 +101,12 @@ WINDOW_STEP = 50 # Example: 50 time steps overlap - NEEDS TUNING
 
 
 # --- Print Confirmation ---
-print("--- NeuroSyn Physio Constants Loaded (v3 - Compatibility Names) ---")
+# Using print format from user's uploaded file
+print("--- NeuroSyn Physio Constants Loaded---")
+print("Version 3.2")
+print("TM & (C) 2025 Syndromatic Inc. All rights reserved.")
 print(f"Myo Address: {MYO_ADDRESS if MYO_ADDRESS else 'Not Set!'}")
-print(f"Data Input Path: {DATA_PATH}")
+print(f"Data Input Path: {DATA_INPUT_PATH}") # User's file prints this relative path
 print(f"Model Path: {MODEL_PATH}")
 print(f"Metadata Path: {METADATA_PATH}")
 print(f"Collection Time per Rep (s): {COLLECTION_TIME}")
@@ -113,4 +115,3 @@ print(f"Number of Classes: {NUM_CLASSES}")
 print(f"Classes Map: {CLASSES}")
 # print(f"Icon Paths: {ICON_PATHS}") # Keep commented unless debugging icons
 print("-" * 35)
-
