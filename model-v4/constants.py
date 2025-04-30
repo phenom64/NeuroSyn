@@ -11,10 +11,12 @@ MYO_ADDRESS = "DD:31:D8:40:BC:22" # As provided from your previous constants
 
 # Directory for storing collected raw data and potentially processed data
 # Using the original variable name for compatibility.
+MAIN_PATH = "model-v4"
 DATA_INPUT_PATH = "data"
-if not os.path.exists(DATA_INPUT_PATH):
-    os.makedirs(DATA_INPUT_PATH)
-    print(f"Created data directory: {DATA_INPUT_PATH}")
+MODEL_INPUT_PATH = "model"
+#if not os.path.exists(DATA_INPUT_PATH):
+#    os.makedirs(DATA_INPUT_PATH)
+#    print(f"Created data directory: {DATA_INPUT_PATH}")
 
 # --- Model & Metadata Paths ---
 # Using original variable names but pointing to new physio-specific filenames
@@ -22,8 +24,9 @@ if not os.path.exists(DATA_INPUT_PATH):
 MODEL_FILENAME = "physio_model.h5"
 METADATA_FILENAME = "physio_metadata.pkl"
 
-MODEL_PATH = os.path.join(DATA_INPUT_PATH, MODEL_FILENAME)
-METADATA_PATH = os.path.join(DATA_INPUT_PATH, METADATA_FILENAME)
+MODEL_PATH = os.path.join(MODEL_INPUT_PATH, MODEL_FILENAME)
+METADATA_PATH = os.path.join(MODEL_INPUT_PATH, METADATA_FILENAME)
+DATA_PATH = os.path.join(MAIN_PATH, DATA_INPUT_PATH)
 
 # --- Physiotherapy Exercise Definitions ---
 # Using the original 'CLASSES' dictionary name for compatibility,
@@ -101,7 +104,7 @@ WINDOW_STEP = 50 # Example: 50 time steps overlap - NEEDS TUNING
 # --- Print Confirmation ---
 print("--- NeuroSyn Physio Constants Loaded (v3 - Compatibility Names) ---")
 print(f"Myo Address: {MYO_ADDRESS if MYO_ADDRESS else 'Not Set!'}")
-print(f"Data Input Path: {DATA_INPUT_PATH}")
+print(f"Data Input Path: {DATA_PATH}")
 print(f"Model Path: {MODEL_PATH}")
 print(f"Metadata Path: {METADATA_PATH}")
 print(f"Collection Time per Rep (s): {COLLECTION_TIME}")

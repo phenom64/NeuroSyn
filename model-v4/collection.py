@@ -1,215 +1,181 @@
-# collection.py for NeuroSyn Physio Project (Adapted for model-v4)
-# v2: Corrected to use variable names from constants.py (v3 - Compatibility Names)
-# Collects EMG and IMU data for defined physiotherapy exercises using Myo Armband.
+#!/usr/bin/env python3
+"""
+collection.py for NeuroSyn Physio Project (model-v6)
+  • Patches pymyo’s classifier handler to ignore too-short packets.
+  • Correctly registers IMU (orientation) + EMG callbacks.
+  • Records synchronized EMG + quaternion.
+"""
 
-import time
-import csv
+import asyncio
 import os
+import uuid
+import struct
+import types
+import pandas as pd
 from datetime import datetime
-import sys
-import threading # Used for pausing input during recording
-import platform # To potentially adjust Myo connection if needed
+from bleak import BleakScanner, BleakError
+from pymyo import Myo
+from pymyo.types import EmgMode, SleepMode
 
-# Attempt to import pymyo, provide guidance if missing
-try:
-    from pymyo import Myo, emg_mode
-except ImportError:
-    print("Error: pymyo library not found.")
-    print("Please install it: pip install pymyo")
-    sys.exit(1)
+from constants import (
+    MYO_ADDRESS,
+    CLASSES,
+    COLLECTION_TIME,
+    REPETITIONS_PER_EXERCISE,
+    PAUSE_DURATION,
+    DATA_INPUT_PATH,
+    RAW_DATA_FILENAME_PREFIX,
+    NUM_EMG_SENSORS,
+    NUM_IMU_VALUES,
+)
 
-# Import constants from the constants file in the same directory
-try:
-    # Assuming constants.py is in the same directory
-    import constants as const
-except ImportError:
-    print("Error: constants.py not found in the current directory.")
-    print("Make sure constants.py is in the same folder as collection.py.")
-    sys.exit(1)
+# ─── Patch pymyo’s buggy classifier handler ─────────────────────────────
+def _safe_on_classifier(self, sender, value: bytearray):
+    # Ignore packets shorter than 3 bytes
+    if len(value) < 3:
+        return
+    try:
+        struct.unpack("<B2s", value)
+    except struct.error:
+        return
+# Monkey-patch onto Myo
+Myo._on_classifier = types.MethodType(_safe_on_classifier, Myo)
+# ────────────────────────────────────────────────────────────────────────
 
-# --- Global Variables ---
-script_start_time = datetime.now().strftime("%Y%m%d_%H%M%S")
-current_exercise_label = -1  # Label for the exercise being recorded (-1 indicates not recording)
-collected_data = []          # List to store (timestamp, emg, imu, label) tuples
-is_recording = False         # Flag to control data collection in the handler
-recording_stop_event = threading.Event() # Event to signal stopping recording
-
-# --- Myo Data Handler ---
-# This function will be called by pymyo when new data is available
-def handle_data(emg, imu, timestamp):
+async def collect_one_repetition(myo: Myo, gesture_id: int, gesture_name: str):
     """
-    Callback function to handle incoming EMG and IMU data from the Myo armband.
-
-    Args:
-        emg (tuple): A tuple containing EMG readings from the 8 sensors.
-        imu (tuple): A tuple containing IMU data (quaternion: w, x, y, z).
-                     Adjust indexing if pymyo provides more/different IMU data.
-        timestamp (int): The timestamp associated with the data packet.
+    Records EMG + IMU orientation for one repetition of one gesture.
+    Returns a list of sample dicts.
     """
-    global collected_data, is_recording, current_exercise_label
+    samples = []
+    imu_q = None
 
-    if is_recording and current_exercise_label != -1:
-        # Ensure we capture the correct number of EMG and IMU values
-        if len(emg) == const.NUM_EMG_SENSORS and len(imu) >= const.NUM_IMU_VALUES:
-            orientation_quat = imu[0:const.NUM_IMU_VALUES] # Extract quaternion (w, x, y, z)
-            # Append data as a tuple: (timestamp, emg_tuple, imu_tuple, label)
-            collected_data.append((timestamp, emg, orientation_quat, current_exercise_label))
-        # Optional: Add logging here if data format issues occur
+    # IMU callback signature: (orientation, accelerometer, gyroscope)
+    def on_imu(orientation, accel, gyro):
+        nonlocal imu_q
+        imu_q = orientation  # quaternion tuple
 
-# --- Data Saving Function ---
-def save_data_to_csv():
-    """Saves the collected data to a CSV file."""
-    global collected_data, script_start_time
+    # EMG callback signature: (emg_data)
+    def on_emg(emg_data):
+        nonlocal imu_q, samples
+        if (
+            len(emg_data) == NUM_EMG_SENSORS
+            and imu_q is not None
+            and len(imu_q) >= NUM_IMU_VALUES
+        ):
+            ts = datetime.now().timestamp()
+            entry = {
+                "id": uuid.uuid4().hex,
+                "time": ts,
+                "gesture_id": gesture_id,
+                "gesture_name": gesture_name,
+            }
+            # EMG channels
+            for i, val in enumerate(emg_data, start=1):
+                entry[f"s{i}"] = val
+            # quaternion fields
+            entry.update({
+                "quat_w": imu_q[0],
+                "quat_x": imu_q[1],
+                "quat_y": imu_q[2],
+                "quat_z": imu_q[3],
+            })
+            samples.append(entry)
 
-    if not collected_data:
-        print("No data collected to save.")
+    # Prep message
+    print(f"\n--- Prepare '{gesture_name}' (class {gesture_id}) in {PAUSE_DURATION}s …")
+    await asyncio.sleep(PAUSE_DURATION)
+    print(f"--- Recording '{gesture_name}' for {COLLECTION_TIME}s …")
+
+    # Register callbacks
+    myo.on_imu(on_imu)
+    myo.on_emg_smooth(on_emg)
+
+    # Wake + enable EMG+IMU
+    await myo.set_sleep_mode(SleepMode.NEVER_SLEEP)
+    await myo.set_mode(emg_mode=EmgMode.SMOOTH, imu_mode=True)
+
+    # Record for the duration
+    await asyncio.sleep(COLLECTION_TIME)
+
+    # Teardown
+    print(f"--- Stopping recording for '{gesture_name}' …")
+    await myo.set_mode(emg_mode=None, imu_mode=False)
+    await myo.set_sleep_mode(SleepMode.NORMAL)
+
+    print(f"→ Collected {len(samples)} samples.")
+    return samples
+
+
+async def main():
+    os.makedirs(DATA_INPUT_PATH, exist_ok=True)
+    ts_str = datetime.now().strftime("%Y%m%d_%H%M%S")
+    out_file = os.path.join(DATA_INPUT_PATH, f"{RAW_DATA_FILENAME_PREFIX}{ts_str}.csv")
+
+    print(f"--- NeuroSyn Physio Data Collection (v6) ---")
+    print(f"Saving to: {out_file}")
+    print("Exercises to record:")
+    for gid, name in CLASSES.items():
+        print(f"  {gid}: {name}")
+    print(f"\nEach: {REPETITIONS_PER_EXERCISE} reps, {COLLECTION_TIME}s each, pause {PAUSE_DURATION}s")
+    print("-" * 50)
+
+    try:
+        print(f"Scanning for Myo at {MYO_ADDRESS} …")
+        device = await BleakScanner.find_device_by_address(MYO_ADDRESS, timeout=10.0)
+    except BleakError as e:
+        print("Bluetooth scan error:", e)
         return
 
-    # Ensure the data directory exists (using the compatible variable name)
-    if not os.path.exists(const.DATA_INPUT_PATH):
-        print(f"Creating data directory: {const.DATA_INPUT_PATH}")
-        os.makedirs(const.DATA_INPUT_PATH)
+    if not device:
+        print(f"ERROR: Could not find Myo at {MYO_ADDRESS}.")
+        return
 
-    # Construct filename using the compatible prefix and path
-    filename = os.path.join(const.DATA_INPUT_PATH, f"{const.RAW_DATA_FILENAME_PREFIX}{script_start_time}.csv")
+    print(f"Found device: {device.name} ({device.address})")
 
-    print(f"\nSaving collected data to {filename}...")
-
+    all_samples = []
     try:
-        with open(filename, 'w', newline='') as csvfile:
-            writer = csv.writer(csvfile)
+        async with Myo(device) as myo:
+            print("Connected to Myo. Initializing …")
+            await asyncio.sleep(1.0)
 
-            # --- Write Header Row ---
-            header = ['timestamp']
-            header.extend([f'emg{i+1}' for i in range(const.NUM_EMG_SENSORS)])
-            header.extend(['quat_w', 'quat_x', 'quat_y', 'quat_z']) # IMU columns
-            header.append('label')
-            writer.writerow(header)
+            for gid, gname in CLASSES.items():
+                for rep in range(1, REPETITIONS_PER_EXERCISE + 1):
+                    print(f"\nStarting: [{gname}] rep {rep}/{REPETITIONS_PER_EXERCISE}")
+                    repsamp = await collect_one_repetition(myo, gid, gname)
+                    all_samples.extend(repsamp)
+                    await asyncio.sleep(0.5)
 
-            # --- Write Data Rows ---
-            for timestamp, emg_data, imu_data, label in collected_data:
-                row = [timestamp]
-                row.extend(emg_data)
-                row.extend(imu_data)
-                row.append(label)
-                writer.writerow(row)
+            if not all_samples:
+                print("WARNING: No data collected. Exiting.")
+                return
 
-        print(f"Successfully saved {len(collected_data)} data points.")
-        # Clear collected data after saving
-        collected_data = []
+            # Build DataFrame
+            df = pd.DataFrame(all_samples)
+            cols = (
+                ["id", "time", "gesture_id", "gesture_name"] +
+                [f"s{i}" for i in range(1, NUM_EMG_SENSORS+1)] +
+                ["quat_w","quat_x","quat_y","quat_z"]
+            )
+            # Ensure all columns exist
+            for c in cols:
+                if c not in df.columns:
+                    df[c] = pd.NA
+            df = df[cols]
 
-    except IOError as e:
-        print(f"Error saving data to CSV: {e}")
-    except Exception as e:
-        print(f"An unexpected error occurred during saving: {e}")
-
-
-# --- Main Data Collection Logic ---
-def main():
-    """Main function to manage Myo connection and data collection loop."""
-    global is_recording, current_exercise_label, collected_data, recording_stop_event
-
-    print("--- NeuroSyn Physio Data Collection (v2 - Compatible) ---")
-    # Using const.CLASSES for the exercise list
-    print(f"Exercises to record ({const.REPETITIONS_PER_EXERCISE} reps each, {const.COLLECTION_TIME}s per rep):")
-    for label, name in const.CLASSES.items():
-        print(f"  {label}: {name}")
-    print("-" * 30)
-
-    # --- Initialize Myo ---
-    print("Connecting to Myo Armband...")
-    myo_connection_params = {'mode': emg_mode.FILTERED}
-
-    # Explicitly use MYO_ADDRESS if provided in constants
-    if hasattr(const, 'MYO_ADDRESS') and const.MYO_ADDRESS:
-        print(f"Attempting connection to specific address: {const.MYO_ADDRESS}")
-        # pymyo uses 'mac_address' parameter
-        myo_connection_params['mac_address'] = const.MYO_ADDRESS
-        # Note: Some older libraries/versions might use 'tty' for serial port on Linux/Mac
-        # if platform.system() != "Windows":
-        #     # You might need to find the correct device path, e.g., /dev/ttyACM0
-        #     # myo_connection_params['tty'] = '/dev/ttyACM0' # Example
-        #     pass
-    else:
-        print("No specific MYO_ADDRESS set in constants.py, attempting auto-detection.")
-        # pymyo attempts auto-detection if mac_address is not provided
-
-    try:
-        m = Myo(**myo_connection_params)
-        # Setup handlers: Use lambda to pass necessary data to our handle_data function
-        # We get orientation directly from m.orientation within the EMG handler call
-        m.add_emg_handler(lambda emg, moving, times: handle_data(emg, m.orientation, times[-1]))
-        # IMU handler might not be strictly needed if orientation is accessed directly,
-        # but add it just in case and do nothing.
-        m.add_imu_handler(lambda imu, times: None)
-
-        m.connect() # Establish the connection
-        print("Myo connected successfully!")
+            print(f"\nSaving {len(df)} samples to CSV: {out_file}")
+            df.to_csv(out_file, index=False)
+            print("Save complete.")
 
     except Exception as e:
-        print(f"\nError connecting to Myo: {e}")
-        print("Troubleshooting:")
-        print("- Is the Myo charged and nearby?")
-        print("- Is Bluetooth enabled?")
-        print("- Is the MYO_ADDRESS in constants.py correct?")
-        print("- Do you have the necessary drivers/permissions (e.g., udev rules on Linux)?")
-        print("- If auto-detection fails, ensure MYO_ADDRESS is set.")
-        sys.exit(1)
+        print("ERROR during collection:", e)
 
-    # --- Data Collection Loop ---
-    try:
-        # Start Myo data streaming in a background thread
-        m.run_daemon() # Use run_daemon to run in background without blocking
-
-        # Iterate through exercises using const.CLASSES
-        for label, exercise_name in const.CLASSES.items():
-            print(f"\n--- Preparing for Exercise: {label} - {exercise_name} ---")
-            current_exercise_label = label
-
-            for rep in range(const.REPETITIONS_PER_EXERCISE):
-                print(f"\nRepetition {rep + 1}/{const.REPETITIONS_PER_EXERCISE}")
-                print(f"Get ready to perform: '{exercise_name}'")
-                # Using const.PAUSE_DURATION
-                print(f"Recording will start in {const.PAUSE_DURATION} seconds...")
-                time.sleep(const.PAUSE_DURATION)
-
-                # Using const.COLLECTION_TIME for recording duration
-                print(f"*** RECORDING '{exercise_name}' NOW for {const.COLLECTION_TIME} seconds... ***")
-                is_recording = True
-                recording_stop_event.clear() # Reset event
-
-                # Start a timer thread to stop recording after the duration
-                stop_timer = threading.Timer(const.COLLECTION_TIME, lambda: recording_stop_event.set())
-                stop_timer.start()
-
-                # Wait until the timer signals to stop
-                recording_stop_event.wait()
-                is_recording = False
-                print("*** RECORDING STOPPED ***")
-
-                # Brief pause before next rep or exercise
-                time.sleep(0.5)
-
-            # Reset label after all reps for an exercise are done
-            current_exercise_label = -1
-
-        print("\n--- Data Collection Complete ---")
-
-    except KeyboardInterrupt:
-        print("\nKeyboard interrupt detected. Stopping data collection...")
-    except Exception as e:
-        print(f"\nAn error occurred during collection: {e}")
     finally:
-        # --- Cleanup ---
-        print("Disconnecting Myo and saving data...")
-        is_recording = False # Ensure recording stops
-        m.disconnect()
-        print("Myo disconnected.")
-        # Use the correct path variable for saving
-        save_data_to_csv()
-
-    print("\nCollection script finished.")
+        print("\nCollection script finished.")
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        print("\nKeyboard interrupt—exiting.")
