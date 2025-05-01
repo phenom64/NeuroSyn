@@ -7,7 +7,7 @@ import os
 
 # Myo Armband Bluetooth MAC Address
 # IMPORTANT: Verify this is the correct address for YOUR Myo Armband.
-MYO_ADDRESS = "DD:31:D8:40:BC:22" # As provided from your previous constants
+MYO_ADDRESS = "FF:39:C8:DC:AC:BA" # As provided from your previous constants
 
 # Directory for storing collected raw data and potentially processed data
 # Using the original variable name for compatibility.
@@ -94,11 +94,13 @@ NUM_IMU_VALUES = 4 # Using Quaternions (w, x, y, z)
 # (These might be adjusted later based on experimentation in train.ipynb)
 
 # Window size for creating sequences from time-series data
-WINDOW_SIZE = 100 # Example: 100 time steps (~0.5s at 200Hz) - NEEDS TUNING
+WINDOW_SIZE = 30 # Example: 100 time steps (~0.5s at 200Hz) - NEEDS TUNING
 
 # Step size (overlap) between consecutive windows
-WINDOW_STEP = 50 # Example: 50 time steps overlap - NEEDS TUNING
+WINDOW_STEP = 25 # Example: 50 time steps overlap - NEEDS TUNING
 
+# Index of the wrist landmark in MediaPipe Hand landmarks list
+WRIST_LANDMARK_INDEX = 0
 
 # --- Print Confirmation ---
 # Using print format from user's uploaded file
