@@ -3,8 +3,10 @@
 combined_collection.py for NeuroSyn Physio Project
 Combines EMG, IMU, and real-time landmark data collection for gesture recognition.
 Uses multiprocessing for OpenCV/MediaPipe isolation.
-*** ADDED: 3D Hand Landmark normalization relative to the wrist (landmark 0). ***
-Includes DEBUG prints for normalization verification.
+Uses separate MediaPipe Pose and Hands(max_num_hands=1) models.
+Extracts LEFT Arm Pose (11,13,15) and RIGHT Hand landmarks.
+NORMALIZATION: All extracted landmarks normalized relative to Pose LEFT Shoulder (index 11).
+*** FIX: Corrected AttributeError in custom drawing logic within opencv_worker. ***
 """
 
 import asyncio
@@ -35,11 +37,9 @@ try:
         RAW_DATA_FILENAME_PREFIX,
         NUM_EMG_SENSORS,
         NUM_IMU_VALUES,
-        # <<< ADDED: Define wrist index constant >>>
-        WRIST_LANDMARK_INDEX # Expecting this in constants.py, default to 0 if not found
     )
     print("--- NeuroSyn Physio Collection ---")
-    print(f"Version 4.5") # Example version
+    print(f"Version 5.4 (Pose+Hands Drawing Fix)") # Updated version marker
     print(f"TM & (C) 2025 Syndromatic Inc. All rights reserved.")
     print(f"Myo Address: {MYO_ADDRESS}")
     print(f"Data Input Path: {DATA_INPUT_PATH}")
@@ -47,39 +47,51 @@ try:
     print(f"Repetitions per Exercise: {REPETITIONS_PER_EXERCISE}")
     print(f"Number of Classes: {len(CLASSES)}")
     print(f"Classes Map: {CLASSES}")
-    print(f"Wrist Landmark Index: {WRIST_LANDMARK_INDEX}") # Print the index being used
     print("-----------------------------------")
 except ImportError:
-    print("WARNING: Failed to import constants.py or WRIST_LANDMARK_INDEX not defined. Defaulting wrist index to 0.")
-    # Define defaults if constants.py is missing or incomplete for this part
-    MYO_ADDRESS = "FF:39:C8:DC:AC:BA" # Example default
-    CLASSES = {0: 'Rest', 1: 'Gesture1'} # Example default
-    COLLECTION_TIME = 5 # Example default
-    REPETITIONS_PER_EXERCISE = 5 # Example default
-    PAUSE_DURATION = 2 # Example default
-    DATA_INPUT_PATH = "data" # Example default
-    RAW_DATA_FILENAME_PREFIX = "physio_data_" # Example default
-    NUM_EMG_SENSORS = 8 # Example default
-    NUM_IMU_VALUES = 4 # Example default
-    WRIST_LANDMARK_INDEX = 0 # Default wrist index
+    print("WARNING: Failed to import constants.py. Using default values.")
+    MYO_ADDRESS = "FF:39:C8:DC:AC:BA"; CLASSES = {0: 'Rest', 1: 'Gesture1'}; COLLECTION_TIME = 5
+    REPETITIONS_PER_EXERCISE = 5; PAUSE_DURATION = 2; DATA_INPUT_PATH = "data"
+    RAW_DATA_FILENAME_PREFIX = "physio_data_"; NUM_EMG_SENSORS = 8; NUM_IMU_VALUES = 4
 except Exception as e: print(f"ERROR loading constants: {e}"); exit()
 # --- End Constants Loading ---
 
+# --- Define Landmarks to Extract ---
+# Using LEFT arm indices based on user testing for stability (Indices 11, 13, 15)
+POSE_LANDMARKS_TO_EXTRACT = {
+    "Pose_L_Shoulder": 11,
+    "Pose_L_Elbow": 13,
+    "Pose_L_Wrist": 15,
+}
+POSE_SHOULDER_INDEX_FOR_NORM = 11 # Left Shoulder for normalization origin
 
-# Define landmark column names
-landmark_names = [
-    "Wrist_x", "Wrist_y", "Wrist_z", "Thumb_CMC_x", "Thumb_CMC_y", "Thumb_CMC_z",
-    "Thumb_MCP_x", "Thumb_MCP_y", "Thumb_MCP_z", "Thumb_IP_x", "Thumb_IP_y", "Thumb_IP_z",
-    "Thumb_Tip_x", "Thumb_Tip_y", "Thumb_Tip_z", "Index_MCP_x", "Index_MCP_y", "Index_MCP_z",
-    "Index_PIP_x", "Index_PIP_y", "Index_PIP_z", "Index_DIP_x", "Index_DIP_y", "Index_DIP_z",
-    "Index_Tip_x", "Index_Tip_y", "Index_Tip_z", "Middle_MCP_x", "Middle_MCP_y", "Middle_MCP_z",
-    "Middle_PIP_x", "Middle_PIP_y", "Middle_PIP_z", "Middle_DIP_x", "Middle_DIP_y", "Middle_DIP_z",
-    "Middle_Tip_x", "Middle_Tip_y", "Middle_Tip_z", "Ring_MCP_x", "Ring_MCP_y", "Ring_MCP_z",
-    "Ring_PIP_x", "Ring_PIP_y", "Ring_PIP_z", "Ring_DIP_x", "Ring_DIP_y", "Ring_DIP_z",
-    "Ring_Tip_x", "Ring_Tip_y", "Ring_Tip_z", "Pinky_MCP_x", "Pinky_MCP_y", "Pinky_MCP_z",
-    "Pinky_PIP_x", "Pinky_PIP_y", "Pinky_PIP_z", "Pinky_DIP_x", "Pinky_DIP_y", "Pinky_DIP_z",
-    "Pinky_Tip_x", "Pinky_Tip_y", "Pinky_Tip_z"
+# Define Hand Landmark Names (base names for generating normalized columns) - 21 landmarks
+HAND_LANDMARK_BASE_NAMES = [
+    "Wrist", "Thumb_CMC", "Thumb_MCP", "Thumb_IP", "Thumb_Tip",
+    "Index_MCP", "Index_PIP", "Index_DIP", "Index_Tip",
+    "Middle_MCP", "Middle_PIP", "Middle_DIP", "Middle_Tip",
+    "Ring_MCP", "Ring_PIP", "Ring_DIP", "Ring_Tip",
+    "Pinky_MCP", "Pinky_PIP", "Pinky_DIP", "Pinky_Tip"
 ]
+
+# Define Pose Landmark Names (for normalized data relative to shoulder)
+POSE_LANDMARK_NAMES_NORM = [
+    f"{name}_{coord}_shldr_norm"
+    for name in POSE_LANDMARKS_TO_EXTRACT.keys()
+    for coord in ["x", "y", "z", "vis"]
+]
+
+# Define RIGHT Hand Landmark Names (for normalized data relative to shoulder)
+HAND_LANDMARK_NAMES_NORM = [
+    f"Hand_R_{name_part}_{coord}_shldr_norm"
+    for name_part in HAND_LANDMARK_BASE_NAMES
+    for coord in ["x", "y", "z"]
+]
+
+# Combine all landmark names for the DataFrame header
+ALL_LANDMARK_NAMES = POSE_LANDMARK_NAMES_NORM + HAND_LANDMARK_NAMES_NORM
+# --- End Landmark Definitions ---
+
 
 # ─── Patch pymyo's buggy classifier handler ─────────────────────────────
 def _safe_on_classifier(self, sender, value: bytearray):
@@ -89,166 +101,245 @@ def _safe_on_classifier(self, sender, value: bytearray):
 Myo._on_classifier = types.MethodType(_safe_on_classifier, Myo)
 # ────────────────────────────────────────────────────────────────────────
 
-def get_landmarks(frame, hands_instance, cv2_module, mp_drawing_module, mp_hands_module):
+def get_landmarks_pose_hands_shoulder_norm(frame, pose_results, hands_results, cv2_module, mp_drawing_module, mp_pose_module, mp_hands_module):
     """
-    Extracts and normalizes hand landmarks from a frame using MediaPipe.
-    Normalization is done relative to the wrist landmark (index WRIST_LANDMARK_INDEX).
+    Extracts LEFT Pose (arm) and RIGHT Hand landmarks, normalizes ALL relative to the Pose LEFT shoulder landmark.
+    Returns a combined dictionary of normalized landmarks.
+    Also returns original landmarks needed for drawing.
     """
-    if hands_instance is None: return None, None
-    if cv2_module is None: return None, None
-    if mp_drawing_module is None: return None, None
-    if mp_hands_module is None: return None, None
+    if cv2_module is None or mp_drawing_module is None or mp_pose_module is None or mp_hands_module is None:
+        print("ERROR: [get_landmarks] Required modules not provided.")
+        return None, None, None
 
-    rgb_frame = cv2_module.cvtColor(frame, cv2_module.COLOR_BGR2RGB)
-    try:
-        results = hands_instance.process(rgb_frame)
-    except Exception as e: print(f"ERROR: [get_landmarks] Exception during hands.process: {e}"); traceback.print_exc(); return None, None
+    normalized_landmarks = {}
+    original_pose_landmarks_for_drawing = None
+    original_right_hand_landmarks_for_drawing = None
+    shoulder_coords = None
 
-    if results.multi_hand_landmarks:
-        # Assuming the first detected hand
-        hand_landmarks = results.multi_hand_landmarks[0]
-
-        # --- Normalization Steps ---
+    # 1. Process Pose Landmarks to find Shoulder
+    if pose_results and pose_results.pose_landmarks:
+        # <<< Store the landmark list directly for drawing >>>
+        original_pose_landmarks_for_drawing = pose_results.pose_landmarks
         try:
-            # 1. Extract Wrist Coordinates (using the defined index)
-            wrist_landmark = hand_landmarks.landmark[WRIST_LANDMARK_INDEX]
-            wrist_x = wrist_landmark.x
-            wrist_y = wrist_landmark.y
-            wrist_z = wrist_landmark.z
+            shoulder_landmark = original_pose_landmarks_for_drawing.landmark[POSE_SHOULDER_INDEX_FOR_NORM]
+            if shoulder_landmark.visibility > 0.5:
+                 shoulder_coords = (shoulder_landmark.x, shoulder_landmark.y, shoulder_landmark.z)
+        except IndexError: print(f"ERROR: [get_landmarks] Pose shoulder index ({POSE_SHOULDER_INDEX_FOR_NORM}) out of bounds.")
+        except Exception as pose_e: print(f"ERROR: [get_landmarks] Finding shoulder: {pose_e}"); traceback.print_exc()
 
-            # DEBUG: Print original wrist coordinates (optional)
-            # print(f"DEBUG: Original Wrist Coords: x={wrist_x:.4f}, y={wrist_y:.4f}, z={wrist_z:.4f}")
+    # 2. If Shoulder found, proceed with normalization
+    if shoulder_coords:
+        shoulder_x, shoulder_y, shoulder_z = shoulder_coords
 
-            landmarks = {}
-            # 2. Normalize all landmarks relative to the wrist
-            for i, landmark in enumerate(hand_landmarks.landmark):
-                if i * 3 < len(landmark_names): # Check bounds using landmark_names list
-                    base_name = landmark_names[i * 3].rsplit('_', 1)[0]
-                    normalized_x = landmark.x - wrist_x
-                    normalized_y = landmark.y - wrist_y
-                    normalized_z = landmark.z - wrist_z # Keep Z for 3D info
+        # 2a. Normalize selected POSE landmarks
+        if original_pose_landmarks_for_drawing: # Check if landmark list exists
+            try:
+                pose_landmark_idx_norm = 0
+                for name, index_orig in POSE_LANDMARKS_TO_EXTRACT.items():
+                    landmark = original_pose_landmarks_for_drawing.landmark[index_orig] # Access landmark list
+                    if pose_landmark_idx_norm < len(POSE_LANDMARK_NAMES_NORM):
+                        key_x, key_y, key_z, key_vis = POSE_LANDMARK_NAMES_NORM[pose_landmark_idx_norm : pose_landmark_idx_norm+4]
+                        normalized_landmarks[key_x] = landmark.x - shoulder_x
+                        normalized_landmarks[key_y] = landmark.y - shoulder_y
+                        normalized_landmarks[key_z] = landmark.z - shoulder_z
+                        normalized_landmarks[key_vis] = landmark.visibility
+                        pose_landmark_idx_norm += 4
+                    else: break
+            except IndexError: print(f"ERROR: [get_landmarks] Pose index out of bounds during norm.")
+            except Exception as pose_norm_e: print(f"ERROR: [get_landmarks] Normalizing pose: {pose_norm_e}"); traceback.print_exc()
 
-                    landmarks[f"{base_name}_x"] = normalized_x
-                    landmarks[f"{base_name}_y"] = normalized_y
-                    landmarks[f"{base_name}_z"] = normalized_z
-                else:
-                    # This case should ideally not happen if landmark_names is correct
-                    print(f"Warning: [get_landmarks] Index {i} out of bounds for landmark_names list during normalization.")
+        # 2b. Normalize RIGHT HAND landmarks
+        if hands_results and hands_results.multi_hand_landmarks:
+            for hand_landmarks, handedness in zip(hands_results.multi_hand_landmarks, hands_results.multi_handedness):
+                if handedness.classification[0].label == 'Right':
+                    # <<< Store the landmark list directly for drawing >>>
+                    original_right_hand_landmarks_for_drawing = hand_landmarks
+                    try:
+                        hand_landmark_idx_norm = 0
+                        for i, landmark in enumerate(original_right_hand_landmarks_for_drawing.landmark): # Access landmark list
+                            if hand_landmark_idx_norm < len(HAND_LANDMARK_NAMES_NORM):
+                                key_x, key_y, key_z = HAND_LANDMARK_NAMES_NORM[hand_landmark_idx_norm : hand_landmark_idx_norm+3]
+                                normalized_landmarks[key_x] = landmark.x - shoulder_x
+                                normalized_landmarks[key_y] = landmark.y - shoulder_y
+                                normalized_landmarks[key_z] = landmark.z - shoulder_z
+                                hand_landmark_idx_norm += 3
+                            else: break
+                    except Exception as hand_norm_e:
+                        print(f"ERROR: [get_landmarks] Normalizing hand: {hand_norm_e}"); traceback.print_exc()
+                        for key in HAND_LANDMARK_NAMES_NORM: normalized_landmarks.pop(key, None)
+                        original_right_hand_landmarks_for_drawing = None
                     break
 
-            # DEBUG: Verify normalized wrist coordinates are close to zero (optional)
-            # if 'Wrist_x' in landmarks: # Check if wrist key exists (it should if index is 0)
-            #    print(f"DEBUG: Normalized Wrist Coords: x={landmarks['Wrist_x']:.4f}, y={landmarks['Wrist_y']:.4f}, z={landmarks['Wrist_z']:.4f}")
+    # Return normalized dict, original pose landmark list, original RIGHT hand landmark list
+    return normalized_landmarks, original_pose_landmarks_for_drawing, original_right_hand_landmarks_for_drawing
 
-            return landmarks, hand_landmarks # Return normalized dict and original landmarks for drawing
-
-        except IndexError:
-            print(f"ERROR: [get_landmarks] Wrist landmark index {WRIST_LANDMARK_INDEX} out of bounds for detected landmarks.")
-            return None, None # Return None if wrist index is invalid
-        except Exception as norm_e:
-            print(f"ERROR: [get_landmarks] Exception during normalization: {norm_e}")
-            traceback.print_exc()
-            return None, None # Return None on other normalization errors
-        # --- End Normalization Steps ---
-
-    return None, None # Return None if no hand landmarks detected
 
 # NOTE: This function now runs in a separate PROCESS
 def opencv_worker(shared_landmarks_proxy, lock, stop_event):
-    """Worker PROCESS for handling OpenCV camera and landmark detection."""
+    """Worker PROCESS using Pose+Hands, draws only Left Arm + Right Hand."""
     # Import heavy libraries INSIDE the process
-    cv2 = None
-    mp = None
-    mp_drawing = None
-    mp_hands = None
+    cv2 = None; mp = None; mp_drawing = None; mp_pose = None; mp_hands = None
     try:
-        # print("DEBUG: [Worker Process] Importing cv2...") # Removed for cleaner output
-        import cv2
-        # print("DEBUG: [Worker Process] Importing mediapipe...") # Removed for cleaner output
-        import mediapipe as mp
-        # print("DEBUG: [Worker Process] Imports successful.") # Removed for cleaner output
+        import cv2; import mediapipe as mp
         mp_drawing = mp.solutions.drawing_utils
+        mp_pose = mp.solutions.pose
         mp_hands = mp.solutions.hands
-    except ImportError as import_err: print(f"ERROR: [Worker Process] Failed to import cv2 or mediapipe: {import_err}"); traceback.print_exc(); return
-    except Exception as general_import_err: print(f"ERROR: [Worker Process] Unexpected error during import: {general_import_err}"); traceback.print_exc(); return
+        print("[Worker Process] OpenCV and MediaPipe imported.")
+    except ImportError as import_err: print(f"ERROR: [Worker Process] Failed imports: {import_err}"); traceback.print_exc(); return
+    except Exception as general_import_err: print(f"ERROR: [Worker Process] Unexpected import error: {general_import_err}"); traceback.print_exc(); return
 
-    # print("DEBUG: [Worker Process] Started execution after imports.") # Removed for cleaner output
-    hands_instance = None
-    cap = None
-
+    pose_instance = None; hands_instance = None; cap = None
     try:
-        # STEP 1 (Worker): Initialize Camera FIRST
+        # STEP 1: Initialize Camera FIRST
         print("[Worker Process] Initializing camera...")
         cap = cv2.VideoCapture(0)
-        if not cap or not cap.isOpened():
-            print("ERROR: [Worker Process] Could not open camera!")
-            return
+        if not cap or not cap.isOpened(): print("ERROR: [Worker Process] Could not open camera!"); return
         print("[Worker Process] Camera opened.")
 
-        # STEP 2 (Worker): Initialize MediaPipe Hands AFTER Camera
+        # STEP 2: Initialize MediaPipe Models AFTER Camera
+        print("[Worker Process] Initializing MediaPipe Pose...")
+        try:
+            pose_instance = mp_pose.Pose(
+                model_complexity=0, # Add this
+                min_detection_confidence=0.5,
+                min_tracking_confidence=0.5
+            )
+            print("[Worker Process] MediaPipe Pose initialized.")
+        except Exception as mp_init_e:
+            print(f"ERROR: Init Pose failed: {mp_init_e}")
+            traceback.print_exc()
+            if cap:
+                cap.release()
+            return
+
         print("[Worker Process] Initializing MediaPipe Hands...")
         try:
             hands_instance = mp_hands.Hands(
-                static_image_mode=False, max_num_hands=1,
-                min_detection_confidence=0.7, min_tracking_confidence=0.7
+                model_complexity=0, # Add this
+                max_num_hands=1,
+                min_detection_confidence=0.7, # Keep this for now, or try 0.5 later
+                min_tracking_confidence=0.7  # Keep this for now, or try 0.5 later
             )
-            print("[Worker Process] MediaPipe Hands initialized.")
+            print("[Worker Process] MediaPipe Hands initialized (max_num_hands=1).")
         except Exception as mp_init_e:
-            print(f"ERROR: [Worker Process] Failed to initialize MediaPipe Hands: {mp_init_e}")
+            print(f"ERROR: Init Hands failed: {mp_init_e}")
             traceback.print_exc()
-            if cap and cap.isOpened(): cap.release()
+            if pose_instance:
+                pose_instance.close()
+            if cap:
+                cap.release()
             return
+
+        # --- Define LEFT Arm Connections for Drawing (Indices from POSE_LANDMARKS_TO_EXTRACT) ---
+        left_arm_connections_drawing = [
+             (POSE_LANDMARKS_TO_EXTRACT["Pose_L_Shoulder"], POSE_LANDMARKS_TO_EXTRACT["Pose_L_Elbow"]),
+             (POSE_LANDMARKS_TO_EXTRACT["Pose_L_Elbow"], POSE_LANDMARKS_TO_EXTRACT["Pose_L_Wrist"]),
+        ]
+        left_arm_indices_to_draw = list(POSE_LANDMARKS_TO_EXTRACT.values())
 
         # --- Main Loop ---
         while not stop_event.is_set():
             ret, frame = cap.read()
-            if not ret: time.sleep(0.01); continue # Avoid busy-waiting
+            if not ret: time.sleep(0.01); continue
 
-            # Get NORMALIZED landmarks
-            normalized_landmarks_dict, original_hand_landmarks_for_drawing = get_landmarks(frame, hands_instance, cv2, mp_drawing, mp_hands)
+            frame = cv2.flip(frame, 1)
+            rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            rgb_frame.flags.writeable = False
+            results_pose = pose_instance.process(rgb_frame)
+            results_hands = hands_instance.process(rgb_frame)
+            rgb_frame.flags.writeable = True
+
+            # Get combined & shoulder-normalized landmarks (for saving)
+            # Also get original landmark lists (for drawing)
+            normalized_landmarks_dict, original_pose_lm_list, original_right_hand_lm_list = get_landmarks_pose_hands_shoulder_norm(
+                frame, results_pose, results_hands, cv2, mp_drawing, mp_pose, mp_hands
+            )
 
             # Update shared proxy with NORMALIZED data
             if lock is None: print("ERROR: [Worker Process] Lock object is None!"); break
             try:
                 with lock:
                     shared_landmarks_proxy.clear()
-                    if normalized_landmarks_dict: # Check if dict is not None
+                    if normalized_landmarks_dict:
                         shared_landmarks_proxy.update(normalized_landmarks_dict)
-            except Exception as lock_e: print(f"ERROR: [Worker Process] Exception acquiring/using lock: {lock_e}"); traceback.print_exc(); break
+            except Exception as lock_e: print(f"ERROR: [Worker Process] Lock exception: {lock_e}"); traceback.print_exc(); break
 
-            # Draw using ORIGINAL landmarks
-            if original_hand_landmarks_for_drawing:
-                try: mp_drawing.draw_landmarks(frame, original_hand_landmarks_for_drawing, mp_hands.HAND_CONNECTIONS)
-                except Exception as draw_e: print(f"ERROR: [Worker Process] Exception during mp_drawing.draw_landmarks: {draw_e}")
+            # --- Drawing --- (Uses original landmark lists)
+            # <<< START CUSTOM POSE DRAWING >>>
+            # <<< FIX: Check if original_pose_lm_list exists >>>
+            if original_pose_lm_list:
+                # pose_landmarks_list = original_pose_lm_list.landmark # This was the error source if original_pose_lm_list is the list itself
+                pose_landmarks_list = original_pose_lm_list.landmark # Access the .landmark attribute correctly
+                image_height, image_width, _ = frame.shape
+
+                # Draw specific LEFT arm connections using cv2.line
+                for connection in left_arm_connections_drawing:
+                    start_idx = connection[0]
+                    end_idx = connection[1]
+                    try: # Add try-except for potential index errors if visibility check fails early
+                        if (pose_landmarks_list[start_idx].visibility > 0.5 and
+                            pose_landmarks_list[end_idx].visibility > 0.5):
+                            start_point = (int(pose_landmarks_list[start_idx].x * image_width),
+                                           int(pose_landmarks_list[start_idx].y * image_height))
+                            end_point = (int(pose_landmarks_list[end_idx].x * image_width),
+                                         int(pose_landmarks_list[end_idx].y * image_height))
+                            cv2.line(frame, start_point, end_point, (0, 255, 0), 2) # Green lines
+                    except IndexError: continue # Skip drawing if index is out of bounds
+
+                # Draw specific LEFT arm landmarks using cv2.circle
+                for idx in left_arm_indices_to_draw:
+                     try: # Add try-except for potential index errors
+                         if pose_landmarks_list[idx].visibility > 0.5:
+                             point = (int(pose_landmarks_list[idx].x * image_width),
+                                      int(pose_landmarks_list[idx].y * image_height))
+                             cv2.circle(frame, point, 5, (0, 0, 255), -1) # Red circles
+                     except IndexError: continue # Skip drawing if index is out of bounds
+            # <<< END CUSTOM POSE DRAWING >>>
+
+            # Draw RIGHT hand landmarks (using standard utility)
+            # <<< FIX: Check if original_right_hand_lm_list exists >>>
+            if original_right_hand_lm_list:
+                try: mp_drawing.draw_landmarks(frame, original_right_hand_lm_list, mp_hands.HAND_CONNECTIONS)
+                except Exception as draw_e: print(f"ERROR: [Worker Process] Hands drawing exception: {draw_e}")
 
             # Display window
             try:
-                cv2.imshow('Hand Tracking', frame)
+                cv2.imshow('MediaPipe Pose(L Arm)+Hands(R Hand)', frame)
                 if cv2.waitKey(10) & 0xFF == ord('q'): print("[Worker Process] 'q' key pressed, exiting worker."); break
-            except Exception as cv_e: print(f"ERROR: [Worker Process] Exception during cv2.imshow/waitKey: {cv_e}"); break
+            except Exception as cv_e: print(f"ERROR: [Worker Process] imshow/waitKey exception: {cv_e}"); break
 
-            # time.sleep(0.001) # Optional small sleep
-
-    except Exception as e:
-        print(f"ERROR: [Worker Process] Unhandled Exception in OpenCV loop: {e}")
-        traceback.print_exc()
+    except Exception as e: print(f"ERROR: [Worker Process] Unhandled Exception: {e}"); traceback.print_exc()
     finally:
+        # (Cleanup remains the same)
         cv2_local = locals().get('cv2')
         print("[Worker Process] Exiting...")
-        if cap and cap.isOpened(): print("[Worker Process] Releasing camera..."); cap.release()
+        if cap and cap.isOpened():
+            print("[Worker Process] Releasing camera...")
+            cap.release()
+        if pose_instance:
+            print("[Worker Process] Closing MediaPipe Pose...")
+            try:
+                pose_instance.close()
+            except Exception as e:
+                print(f"Error closing pose: {e}")
         if hands_instance:
             print("[Worker Process] Closing MediaPipe Hands...")
-            try: hands_instance.close()
-            except Exception as mp_close_e: print(f"ERROR: [Worker Process] Exception closing MediaPipe Hands: {mp_close_e}")
+            try:
+                hands_instance.close()
+            except Exception as e:
+                print(f"Error closing hands: {e}")
         if cv2_local:
             print("[Worker Process] Destroying OpenCV windows...")
-            try: cv2_local.destroyAllWindows()
-            except Exception as destroy_e: print(f"ERROR: [Worker Process] Exception destroying OpenCV windows: {destroy_e}")
+            try:
+                cv2_local.destroyAllWindows()
+            except Exception as e:
+                print(f"Error destroying windows: {e}")
         print("[Worker Process] Finished.")
 
 
 async def collect_one_repetition(myo: Myo, gesture_id: int, gesture_name: str, shared_landmarks_proxy, lock):
-    """ Records EMG + IMU + NORMALIZED landmarks (from proxy) for one repetition. """
+    """ Records EMG + IMU + shoulder-normalized L_Pose/R_Hand landmarks """
+    # (This function remains the same)
     samples = []
     imu_q = None
     emg_callback_active = True
@@ -266,10 +357,9 @@ async def collect_one_repetition(myo: Myo, gesture_id: int, gesture_name: str, s
             if lock is None: current_landmarks = {}
             else:
                 try:
-                    with lock: current_landmarks = dict(shared_landmarks_proxy) # Read NORMALIZED landmarks
-                except Exception as lock_e: print(f"ERROR: [on_emg] Exception acquiring/using lock: {lock_e}"); current_landmarks = {}
-            # Add normalized landmarks (or NA if missing) to the sample
-            for name in landmark_names: entry[name] = current_landmarks.get(name, pd.NA)
+                    with lock: current_landmarks = dict(shared_landmarks_proxy)
+                except Exception as lock_e: print(f"ERROR: [on_emg] Lock exception: {lock_e}"); current_landmarks = {}
+            for name in ALL_LANDMARK_NAMES: entry[name] = current_landmarks.get(name, pd.NA)
             samples.append(entry)
 
     print(f"\n--- Prepare '{gesture_name}' (class {gesture_id}) in {PAUSE_DURATION}s …")
@@ -296,11 +386,11 @@ async def collect_one_repetition(myo: Myo, gesture_id: int, gesture_name: str, s
 
 
 async def main():
-    # print("DEBUG: Starting main function.") # Removed debug print
+    # (Main function remains the same)
     os.makedirs(DATA_INPUT_PATH, exist_ok=True)
     ts_str = datetime.now().strftime("%Y%m%d_%H%M%S")
     out_file = os.path.join(DATA_INPUT_PATH, f"{RAW_DATA_FILENAME_PREFIX}{ts_str}.csv")
-    print(f"--- NeuroSyn Physio Data Collection (Combined + Normalized) ---") # Updated title
+    print(f"--- NeuroSyn Physio Data Collection (Specific Pose+Hands, Shoulder Normalized) ---")
     print(f"Saving to: {out_file}")
     print("Exercises to record:"); [print(f"  {gid}: {name}") for gid, name in CLASSES.items()]
     print(f"\nEach: {REPETITIONS_PER_EXERCISE} reps, {COLLECTION_TIME}s each, pause {PAUSE_DURATION}s")
@@ -308,99 +398,86 @@ async def main():
 
     # STEP 1: Perform Bleak Scan FIRST
     device = None
-    print("Scanning for Myo device...") # Keep user-facing message
+    print("Scanning for Myo device...")
     try:
         scanner = BleakScanner()
         devices = await scanner.discover(timeout=10.0)
         device = next((d for d in devices if d.address == MYO_ADDRESS), None)
-        # print(f"DEBUG: Bleak scan finished. Device found: {device is not None}") # Removed debug print
     except Exception as e: print("ERROR: Bluetooth scan failed:", e); traceback.print_exc(); return
     if not device: print(f"ERROR: Could not find Myo at {MYO_ADDRESS}."); return
     print(f"Found device: {device.name} ({device.address})")
 
     # STEP 2: Use multiprocessing Manager for shared state
     with mp.Manager() as manager:
-        # print("DEBUG: Multiprocessing Manager started.") # Removed debug print
         latest_landmarks_proxy = manager.dict()
         landmarks_lock = mp.Lock()
         stop_event = mp.Event()
         opencv_process = None
 
-        # print("DEBUG: Initializing shared resources for process...") # Removed debug print
-
         # STEP 3: Start OpenCV worker PROCESS AFTER scan
-        # print("DEBUG: Creating OpenCV process...") # Removed debug print
         opencv_process = mp.Process(target=opencv_worker, args=(latest_landmarks_proxy, landmarks_lock, stop_event))
-        # print("DEBUG: Starting OpenCV process...") # Removed debug print
         opencv_process.start()
-        print("OpenCV process started. Allowing time for initialization...") # Keep user-facing message
-        await asyncio.sleep(5.0)
-        # print("DEBUG: Post-process-start delay finished.") # Removed debug print
+        print("OpenCV process started. Allowing time for initialization...")
+        await asyncio.sleep(6.0)
 
         # STEP 4: Connect to Myo and start collection
         all_samples = []; myo_connection = None
-        print("Connecting to Myo...") # Keep user-facing message
+        print("Connecting to Myo...")
         try:
             myo_connection = Myo(device)
             async with myo_connection as myo:
-                print("Connected to Myo.") # Keep user-facing message
+                print("Connected to Myo.")
                 await asyncio.sleep(1.0)
 
                 # --- Main Collection Loop ---
                 for gid, gname in CLASSES.items():
                     for rep in range(1, REPETITIONS_PER_EXERCISE + 1):
-                        # print(f"\nDEBUG: Starting rep {rep} for gesture {gid} ('{gname}')...") # Removed debug print
+                        print(f"\nStarting rep {rep}/{REPETITIONS_PER_EXERCISE} for gesture {gid} ('{gname}')...")
                         try:
                             repsamp = await collect_one_repetition(myo, gid, gname, latest_landmarks_proxy, landmarks_lock)
-                            # print(f"DEBUG: Finished rep {rep} for gesture {gid}. Samples: {len(repsamp)}") # Removed debug print
                             all_samples.extend(repsamp)
-                        except Exception as collect_e: print(f"ERROR: Exception during collect_one_repetition for gesture {gid}, rep {rep}: {collect_e}"); traceback.print_exc(); print("WARNING: Continuing collection despite error.")
-                        # print(f"DEBUG: Pausing for {PAUSE_DURATION}s after rep {rep}...") # Removed debug print
-                        await asyncio.sleep(0.1) # Keep tiny pause
+                        except Exception as collect_e: print(f"ERROR: Exception during collect_one_repetition: {collect_e}"); traceback.print_exc(); print("WARNING: Continuing collection despite error.")
+                        await asyncio.sleep(0.1)
                 # --- End Main Collection Loop ---
-                print("\nFinished all repetitions.") # Keep user-facing message
+                print("\nFinished all repetitions.")
 
                 if not all_samples: print("WARNING: No data collected. Exiting without saving.")
                 else:
                     # Build and save DataFrame
-                    print("Building DataFrame...") # Keep user-facing message
+                    print("Building DataFrame...")
                     df = pd.DataFrame(all_samples)
-                    cols = (["id", "time", "gesture_id", "gesture_name"] + [f"s{i}" for i in range(1, NUM_EMG_SENSORS+1)] + ["quat_w", "quat_x", "quat_y", "quat_z"] + landmark_names)
-                    # print("DEBUG: Ensuring all columns exist...") # Removed debug print
+                    cols = (["id", "time", "gesture_id", "gesture_name"] +
+                            [f"s{i}" for i in range(1, NUM_EMG_SENSORS+1)] +
+                            ["quat_w", "quat_x", "quat_y", "quat_z"] +
+                            ALL_LANDMARK_NAMES)
+                    print("Ensuring all columns exist...")
                     for c in cols:
                         if c not in df.columns: df[c] = pd.NA
                     df = df[cols]
-                    print(f"\nSaving {len(df)} samples to CSV: {out_file}") # Keep user-facing message
-                    try: df.to_csv(out_file, index=False); print("Save complete.") # Keep user-facing message
+                    print(f"\nSaving {len(df)} samples to CSV: {out_file}")
+                    try: df.to_csv(out_file, index=False); print("Save complete.")
                     except Exception as save_e: print(f"ERROR: Failed to save DataFrame to CSV: {save_e}"); traceback.print_exc()
         except Exception as e: print(f"ERROR during collection: {e}"); traceback.print_exc()
         finally:
-            # print("DEBUG: Entering finally block (main process).") # Removed debug print
-            print("Cleaning up OpenCV process...") # Keep user-facing message
+            print("Cleaning up OpenCV process...")
             # STEP 5: Signal and Join the worker PROCESS
             if opencv_process and opencv_process.is_alive():
-                # print("DEBUG: Stop event set for OpenCV process.") # Removed debug print
                 stop_event.set()
-                # print("DEBUG: Waiting for OpenCV process to join...") # Removed debug print
                 opencv_process.join(timeout=10.0)
-                if opencv_process.is_alive():
-                    print("WARNING: OpenCV process did not exit gracefully. Terminating...")
-                    opencv_process.terminate(); opencv_process.join()
-                # else: print("DEBUG: OpenCV process join finished.") # Removed debug print
-            # else: print("DEBUG: OpenCV process was not running or already finished.") # Removed debug print
-            print("\nCollection script finished.") # Keep user-facing message
+                if opencv_process.is_alive(): print("WARNING: OpenCV process did not exit gracefully. Terminating..."); opencv_process.terminate(); opencv_process.join()
+                else: print("OpenCV process finished.")
+            else: print("OpenCV process was not running or already finished.")
+            print("\nCollection script finished.")
 
 # Protect main execution for multiprocessing
 if __name__ == "__main__":
     # mp.freeze_support() # Might be needed on Windows if creating executables
 
-    # print("DEBUG: Script execution started.") # Removed debug print
+    print("Script execution started.")
     try:
         if os.name == 'nt': asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
-        # print("DEBUG: Running asyncio.run(main)...") # Removed debug print
         asyncio.run(main())
-        # print("DEBUG: asyncio.run(main) finished.") # Removed debug print
     except KeyboardInterrupt: print("\nKeyboard interrupt—exiting.")
     except Exception as e: print(f"ERROR: Top-level exception: {e}"); traceback.print_exc()
-    # finally: print("DEBUG: Script execution ended.") # Removed debug print
+    finally: print("Script execution ended.")
 
