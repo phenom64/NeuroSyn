@@ -73,6 +73,31 @@ ICON_PATHS = {
 # the duration (in seconds) to record data for each exercise repetition.
 COLLECTION_TIME = 5 # seconds per repetition
 
+# Poses for EMG Calibration Phase (e.g., MVCs or strong static holds)
+CALIBRATION_POSES = {
+    "Fist": 10,       # Strong fist clench
+    "Spread": 11,     # Fingers spread wide
+    "Rest": 0         # Relaxed hand state
+}
+
+# Duration (seconds) to hold each calibration pose
+CALIBRATION_HOLD_TIME = 5 # seconds
+
+# Minimum duration (seconds) to hold a randomly selected pose
+MIN_HOLD_TIME = 4 # seconds
+
+# Maximum duration (seconds) to hold a randomly selected pose
+MAX_HOLD_TIME = 8 # seconds
+
+# Poses for the randomized collection phase (can be same as CLASSES)
+RANDOM_POSES = CLASSES
+
+# Epsilon value to prevent division by zero in EMG normalization
+EMG_NORMALIZATION_EPSILON = 1e-6
+
+# Total duration (minutes) for the randomized data collection session
+SESSION_DURATION_MINUTES = 5 # minutes
+
 # Number of repetitions to collect for each exercise (New parameter)
 REPETITIONS_PER_EXERCISE = 5
 
@@ -104,6 +129,7 @@ WRIST_LANDMARK_INDEX = 0
 
 # --- Print Confirmation ---
 # Using print format from user's uploaded file
+"""
 print("--- NeuroSyn Physio Constants Loaded---")
 print("Version 3.2")
 print("TM & (C) 2025 Syndromatic Inc. All rights reserved.")
@@ -117,3 +143,4 @@ print(f"Number of Classes: {NUM_CLASSES}")
 print(f"Classes Map: {CLASSES}")
 # print(f"Icon Paths: {ICON_PATHS}") # Keep commented unless debugging icons
 print("-" * 35)
+"""
