@@ -272,16 +272,25 @@ async def run_calibration_phase(myo: Myo):
     all_calibration_emg = []; calibration_active = True
     def on_calib_emg(emg_data):
         nonlocal all_calibration_emg, calibration_active
+        #print(f"DEBUG: on_calib_emg called. active={calibration_active}, data={emg_data}")
         if calibration_active and emg_data is not None and len(emg_data) == NUM_EMG_SENSORS: all_calibration_emg.append(emg_data)
     print("Preparing Myo for calibration...");
     try:
-        await myo.set_sleep_mode(SleepMode.NEVER_SLEEP); await myo.set_mode(emg_mode=EmgMode.RAW, imu_mode=False); myo.on_emg(on_calib_emg); print("Myo ready.")
-    except Exception as e: print(f"ERROR: Failed to set Myo mode for calibration: {e}"); return None, None
+        await myo.set_sleep_mode(SleepMode.NEVER_SLEEP);
+        # <<< Keep SMOOTH mode as requested >>>
+        await myo.set_mode(emg_mode=EmgMode.SMOOTH, imu_mode=False);
+        # <<< Change registration method >>>
+        myo.on_emg_smooth(on_calib_emg); # Use on_emg_smooth
+        print("Allowing Myo to stabilize...")
+        await asyncio.sleep(1.0) # Keep the delay
+        print("Myo ready.")
+    except Exception as e:
+        print(f"ERROR: Failed to set Myo mode for calibration: {e}");
+        return None, None
     for pose_name, pose_id in CALIBRATION_POSES.items():
         print(f"\n--- Prepare Calibration Pose: '{pose_name}' in {PAUSE_DURATION}s …"); await asyncio.sleep(PAUSE_DURATION)
         print(f"--- HOLD '{pose_name}' for {CALIBRATION_HOLD_TIME}s …"); calibration_active = True; await asyncio.sleep(CALIBRATION_HOLD_TIME); calibration_active = False
         print(f"--- Relax... ({PAUSE_DURATION}s)"); await asyncio.sleep(PAUSE_DURATION)
-    myo.off_emg(on_calib_emg);
     try: await myo.set_mode(emg_mode=None, imu_mode=False); await myo.set_sleep_mode(SleepMode.NORMAL)
     except Exception as e: print(f"Warning: Failed to reset Myo mode after calibration: {e}")
     print("\nCalibration data collection complete.")
@@ -317,12 +326,12 @@ async def collect_dynamic_hold(myo: Myo, gesture_id: int, gesture_name: str, hol
             for name in ALL_LANDMARK_NAMES: entry[name] = current_landmarks.get(name, pd.NA)
             samples.append(entry)
     print(f"\n--- Hold '{gesture_name}' (class {gesture_id}) for {hold_duration:.1f}s …")
-    myo.on_imu(on_imu); myo.on_emg_smooth(on_emg)
+    myo.on_imu(on_imu); myo.on_emg_smooth(on_emg); print("Allowing Myo to stabilize..."); await asyncio.sleep(1); print("Myo ready.")
     try: await myo.set_sleep_mode(SleepMode.NEVER_SLEEP); await myo.set_mode(emg_mode=EmgMode.SMOOTH, imu_mode=True)
     except Exception as mode_e: print(f"ERROR: Failed to set Myo modes: {mode_e}"); traceback.print_exc(); return []
     await asyncio.sleep(hold_duration)
     print(f"--- Relax...")
-    emg_callback_active = False; myo.off_imu(on_imu); myo.off_emg_smooth(on_emg)
+    emg_callback_active = False
     try: await myo.set_mode(emg_mode=None, imu_mode=False); await myo.set_sleep_mode(SleepMode.NORMAL)
     except Exception as teardown_e: print(f"ERROR: Failed during Myo teardown: {teardown_e}"); traceback.print_exc()
     print(f"→ Collected {len(samples)} samples for this hold.")
@@ -414,4 +423,3 @@ if __name__ == "__main__":
     except KeyboardInterrupt: print("\nKeyboard interrupt—exiting.")
     except Exception as e: print(f"ERROR: Top-level exception: {e}"); traceback.print_exc()
     finally: print("Script execution ended.") # Keep a final message
-

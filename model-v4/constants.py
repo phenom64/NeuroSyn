@@ -7,7 +7,8 @@ import os
 
 # Myo Armband Bluetooth MAC Address
 # IMPORTANT: Verify this is the correct address for YOUR Myo Armband.
-MYO_ADDRESS = "FF:39:C8:DC:AC:BA" # As provided from your previous constants
+#MYO_ADDRESS = "FF:39:C8:DC:AC:BA" # As provided from your previous constants
+MYO_ADDRESS = "DD:31:D8:40:BC:22"
 
 # Directory for storing collected raw data and potentially processed data
 # Using the original variable name for compatibility.
@@ -75,8 +76,8 @@ COLLECTION_TIME = 5 # seconds per repetition
 
 # Poses for EMG Calibration Phase (e.g., MVCs or strong static holds)
 CALIBRATION_POSES = {
-    "Fist": 10,       # Strong fist clench
-    "Spread": 11,     # Fingers spread wide
+    #"Fist": 10,       # Strong fist clench
+    #"Spread": 11,     # Fingers spread wide
     "Rest": 0         # Relaxed hand state
 }
 
