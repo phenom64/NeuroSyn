@@ -15,10 +15,8 @@ except ImportError as e:
     print(f"ERROR (calibration.py): Failed to import constants: {e}")
     raise # Or exit()
 
-# --- Paste the run_calibration_phase function definition below ---
 async def run_calibration_phase(myo: Myo):
     """Guides user through calibration poses and calculates EMG mean/std dev."""
-    # ... (rest of the function code as it was in collection.py) ...
     print("\n" + "="*20 + " EMG Calibration Phase " + "="*20)
     all_calibration_emg = []; calibration_active = True
     def on_calib_emg(emg_data):

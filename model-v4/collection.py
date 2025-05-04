@@ -91,7 +91,7 @@ EMG_RAW_NAMES = [f"s{i}" for i in range(1, NUM_EMG_SENSORS + 1)]
 EMG_NORM_NAMES = [f"s{i}_norm" for i in range(1, NUM_EMG_SENSORS + 1)]
 ALL_LANDMARK_NAMES = POSE_LANDMARK_NAMES_NORM + HAND_LANDMARK_NAMES_NORM
 ALL_DATA_COLUMNS = (["id", "time", "gesture_id", "gesture_name"] + EMG_NORM_NAMES +
-                    ["quat_w", "quat_x", "quat_y", "quat_z"] + ALL_LANDMARK_NAMES)
+                    ["quat_w", "quatx", "quaty", "quatz"] + ALL_LANDMARK_NAMES)
 # --- End Landmark Definitions ---
 
 
@@ -354,7 +354,7 @@ async def collect_dynamic_hold(myo: Myo, gesture_id: int, gesture_name: str, hol
             for i, val_norm in enumerate(emg_norm_np, start=1): entry[f"s{i}_norm"] = val_norm
 
             # IMU Quaternion
-            entry.update({"quat_w": imu_q[0], "quat_x": imu_q[1], "quat_y": imu_q[2], "quat_z": imu_q[3]})
+            entry.update({"quat_w": imu_q[0], "quatx": imu_q[1], "quaty": imu_q[2], "quatz": imu_q[3]})
 
             # Landmarks (from shared proxy)
             current_landmarks = {} # Default to empty
