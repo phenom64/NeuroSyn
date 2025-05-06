@@ -26,7 +26,7 @@ from constants import (
     REPETITIONS_PER_EXERCISE, # Used for calibration prompts (though not strictly needed now)
     NUM_EMG_SENSORS,
     NUM_IMU_VALUES,
-    DATA_PATH # For potential future saving/logging if needed
+    DATA_INPUT_PATH # For potential future saving/logging if needed
 )
 from pymyo import Myo
 from pymyo.types import EmgMode, SleepMode, ImuMode
