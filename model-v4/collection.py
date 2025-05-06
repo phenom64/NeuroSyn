@@ -1,6 +1,8 @@
 """
-combined_collection.py for NeuroSyn Physio Project
+New collection.py for NeuroSyn Physio Project
 Combines EMG, IMU, and real-time landmark data collection for gesture recognition.
+
+Based on the Artemis Project, Copyright (c) The Regents of the Manchester Universities 2025
 Uses multiprocessing for OpenCV/MediaPipe isolation.
 Uses separate MediaPipe Pose and Hands(max_num_hands=1) models.
 Extracts LEFT Arm Pose (11,13,15) and RIGHT Hand landmarks.
