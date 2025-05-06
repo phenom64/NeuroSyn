@@ -48,4 +48,10 @@ python NSE-interfaceFX.py
    
 ## 🌟 Project Lineage
 
-This repository is a fork of the Artemis Project originally developed by the University of Manchester’s Robotics Society. As a key member of this society, I architected and implemented its cross-platform PyQt6 user interface for the Artemis Project. NeuroSyn extends my work with physiotherapy-focused calibration, classification, and feedback modules for my final-year dissertation in Product Design Engineering.
+This repository is a fork of the Artemis Project originally developed by the University of Manchester’s Robotics Society. As a key member of this society, I architected and implemented its cross-platform PyQt6 user interface for the Artemis Project. NeuroSyn extends my work with physiotherapy-focused calibration, classification, and feedback modules for my final-year dissertation in Product Design Engineering.<br> <br>
+
+<small><sub>
+TM & &copy; 2025. Syndromatic Inc. All rights reserved.<br>
+Designed by Kavish Krishnakumar, Dylan Simpson, Szymon Arciszewski, and Mark Matvijcsuk in Manchester.
+</sub></small>
+
